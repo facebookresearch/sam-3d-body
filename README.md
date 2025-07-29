@@ -27,7 +27,7 @@ First, we need to download a model checkpoint. All the model checkpoints can be 
 
 < DOWNLOAD CLI INSTRUCTIONS HERE >
 
-Then SAM 3D can be used in a few lines as follows for image and video prediction.
+Then SAM 3D can be used in a few lines as follows for image prediction.
 
 ### Image prediction
 
