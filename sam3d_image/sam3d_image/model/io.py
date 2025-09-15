@@ -11,10 +11,9 @@ from lightning.pytorch.utilities.consolidate_checkpoint import (
 )
 from glob import glob
 
-from lidra.data.utils import get_child, set_child
+from sam3d_image.model.backbone.utils.struct_utils import get_child, set_child
 
 
-# TODO(Pierre) : Make a version working as a "state_dict_fn" filter ?
 # rename
 def rename_checkpoint_weights_using_suffix_matching(
     checkpoint_path_in,
