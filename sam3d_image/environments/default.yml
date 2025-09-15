@@ -1,4 +1,4 @@
-name: lidra-3dfy
+name: sam3d-image
 channels:
   - conda-forge
 dependencies:

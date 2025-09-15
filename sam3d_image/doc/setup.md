@@ -1,0 +1,37 @@
+# Setup
+
+Please operate in the SAM3DImage directory, as SAM3D contains two package.
+
+## 1. Pull Submodules
+
+The following code will pull external git submodules. It needs to be run only once (after `git clone` of the sam3d codebase).
+```bash
+git submodule update --init --recursive
+```
+
+## 2. Setup Python Environment
+
+The following will install the default environment. If you use `conda` instead of `mamba`, replace its name in the first two lines. Note that you may have to build the environment on a compute note with GPU (e.g., you may get a `RuntimeError: Not compiled with GPU support` error when running certain parts of the code that use Pytorch3D).
+
+```bash
+# create sam3d-imag environment
+mamba env create -f environments/default.yml
+mamba activate sam3d-image
+
+# for pytorch/cuda dependencies
+export PIP_EXTRA_INDEX_URL="https://pypi.ngc.nvidia.com https://download.pytorch.org/whl/cu121"
+
+# install sam3d-image and core dependencies
+pip install -e '.[dev]'
+pip install -e '.[p3d]' # pytorch3d dependency on pytorch is broken, this 2-step approach solves it
+
+# for inference
+export PIP_FIND_LINKS="https://nvidia-kaolin.s3.us-east-2.amazonaws.com/torch-2.5.1_cu121.html"
+pip install -e '.[inference]'
+
+# patch things that aren't yet in official pip packages
+./patching/hydra # https://github.com/facebookresearch/hydra/pull/2863
+
+# install git hook (dev only)
+./bin/setup/git_hooks
+```
