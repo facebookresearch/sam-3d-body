@@ -60,9 +60,7 @@ class ATLAS46(nn.Module):
         self.num_expr_comps = num_expr_comps
         self.num_hand_shape_comps = num_hand_shape_comps
         self.lod = lod.lower()
-        assert self.lod in ["smpl", "smplx", "lod3", "lod4", "lod5"]
-        if self.lod == "smplx":
-            print("WARNING! ATLAS-to-SMPLX mapping is suboptimal for face")
+        assert self.lod in ["lod3", "lod4", "lod5"]
         self.load_keypoint_mapping = load_keypoint_mapping
         self.znorm_fullbody_scales = znorm_fullbody_scales
         self.enable_slim_keypoint_mapping = enable_slim_keypoint_mapping
@@ -70,8 +68,6 @@ class ATLAS46(nn.Module):
         self.verbose = verbose
 
         # Load Model
-        if not os.path.exists(self.model_data_dir):
-            self.model_data_dir = "/large_experiments/3po/model/atlas_250624" #fallout on FC
         if self.verbose:
             print(f"Loading ATLAS from {model_data_dir} ...")
         model_dict = load_pickle(osp.join(self.model_data_dir, "params.pkl"))
@@ -173,21 +169,7 @@ class ATLAS46(nn.Module):
         for p in self.posedirs.parameters():
             p.requires_grad = False
         if self.lod != "lod3":
-            assert self.lod in ["smpl", "smplx"]
-            lod3_to_other_weight = torch.sparse.FloatTensor(
-                *load_pickle(osp.join(self.model_data_dir, "lod_mapping.pkl"))[
-                    f"lod3_to_{self.lod}"
-                ]
-            )
-            self.posedirs[2].weight = nn.Parameter(
-                (
-                    lod3_to_other_weight
-                    @ self.posedirs[2].weight.unflatten(0, (-1, 3)).flatten(1, 2)
-                )
-                .unflatten(1, (3, -1))
-                .flatten(0, 1),
-                requires_grad=False,
-            )
+            raise ValueError("Only lod3 is supported!")
 
         # Load lod_mapping for sparse vertices supervision
         lod_mapping_data = load_pickle(osp.join(self.model_data_dir, "lod_mapping.pkl"))
@@ -235,16 +217,12 @@ class ATLAS46(nn.Module):
                     requires_grad=False,
                 )
             else:
-                assert self.lod in ["lod3", "smpl", "smplx"]
+                assert self.lod in ["lod3"]
                 if self.verbose:
                     print(
                         "Using an updated KPS mapping w/ eyes & chin tied to vertices, not joints."
                     )
-                if self.lod == "smpl":
-                    print("SMPL to KPS for ATLAS is a bit suboptimal")
-                if self.lod == "smplx":
-                    print("SMPLX to KPS for ATLAS is very suboptimal")
-                if self.lod in ["lod3", "smpl"]:
+                if self.lod in ["lod3"]:
                     self.keypoint_mapping = nn.Parameter(
                         load_pickle(
                             osp.join(
@@ -254,15 +232,7 @@ class ATLAS46(nn.Module):
                         ),
                         requires_grad=False,
                     )
-                elif self.lod == 'smplx':
-                    # TODO: mapping lod3 vertices to smplx vertices, not a suboptimal way!
-                    # self.lod3_to_smplx_verts_mapping = torch.sparse.FloatTensor(*load_pickle("/private/home/jinhyun1/codes/3po/atlas_250624/assets/lod_mapping_new.pkl")['lod3_to_smplx']).to_dense()
-                    self.keypoint_mapping = nn.Parameter(
-                        load_pickle(
-                            osp.join(self.model_data_dir, "lod3_joint_to_kps_v4_fixEyeAndChin.pkl")
-                        ),
-                        requires_grad=False,
-                    )
+                
             self.general_expression_skeleton_kps_dict = model_dict[
                 "keypoint_mapping_lod3_dict"
             ]["general_expression_skeleton_kps_dict"]

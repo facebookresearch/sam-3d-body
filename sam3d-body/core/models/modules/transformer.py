@@ -13,11 +13,6 @@ from .layer_scale import LayerScale
 from .swiglu_ffn import SwiGLUFFNFused
 
 
-def save_pickle(obj, f):
-    with open(f, "wb+") as ff:
-        pickle.dump(obj, ff)
-
-
 class LayerNorm32(nn.LayerNorm):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return super().forward(x.float()).type(x.dtype)
@@ -334,8 +329,7 @@ class Attention(nn.Module):
         attn_drop = self.attn_drop if self.training else 0.0
         if attn_mask is not None:
             attn_mask = attn_mask.unsqueeze(1).expand(-1, self.num_heads, -1, -1)
-        # if k.shape[2] == 192:
-        #     save_pickle((q, k), "/private/home/jinhyun1/qk.pkl"); print("SAVING!2")
+        
         x = F.scaled_dot_product_attention(
             q, k, v, attn_mask=attn_mask, dropout_p=attn_drop
         )

@@ -205,7 +205,6 @@ def flip_bbox(bbox: np.ndarray,
     bbox_flipped = bbox.copy()
     w, h = image_size
 
-    # TODO: consider using "integer corner" coordinate system
     if direction == 'horizontal':
         if bbox_format == 'xywh' or bbox_format == 'center':
             bbox_flipped[..., 0] = w - bbox[..., 0] - 1

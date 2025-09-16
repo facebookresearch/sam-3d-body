@@ -12,29 +12,6 @@ from ..optim.fp16_utils import convert_module_to_f16, convert_to_fp16_safe
 from .base_lightning_module import BaseLightningModule
 
 
-def get_cam_intrinsics(model, batch):
-    batch_size = batch["img_full"].shape[0]
-
-    # Initialize camera intrinsics
-    img_h, img_w = batch["ori_img_size"][:, 0, 1], batch["ori_img_size"][:, 0, 0]
-    cam_intrinsics = torch.zeros((batch_size, 3, 3)).to(batch["img"])
-    cam_intrinsics[:, 0, 2] = img_w / 2
-    cam_intrinsics[:, 1, 2] = img_h / 2
-    cam_intrinsics[:, 2, 2] = 1
-
-    # Get Camera intrinsics using HumanFoV Model
-    img_full_resized = model.normalize_img(batch["img_full"])
-    model.cam_model.eval()
-    with torch.no_grad():
-        estimated_fov, _ = model.cam_model(img_full_resized)
-    vfov = estimated_fov[:, 1]
-    fl_h = img_h / (2 * torch.tan(vfov / 2))
-    cam_intrinsics[:, 0, 0] = fl_h
-    cam_intrinsics[:, 1, 1] = fl_h
-
-    return cam_intrinsics
-
-
 class BaseModel(BaseLightningModule):
     def __init__(self, cfg: Optional[CfgNode], **kwargs):
         super().__init__()
@@ -146,12 +123,8 @@ class BaseModel(BaseLightningModule):
             focal_length = cam_int[:, 0, 0]
         bs = 2 * focal_length / (tz + 1e-8)
 
-        if not self.cfg.MODEL.DECODER.get("USE_INTRIN_CENTER", False):
-            cx = 2 * (bbox_center[:, 0] - (img_size[:, 0] / 2)) / bs
-            cy = 2 * (bbox_center[:, 1] - (img_size[:, 1] / 2)) / bs
-        else:
-            cx = 2 * (bbox_center[:, 0] - (cam_int[:, 0, 2])) / bs
-            cy = 2 * (bbox_center[:, 1] - (cam_int[:, 1, 2])) / bs
+        cx = 2 * (bbox_center[:, 0] - (cam_int[:, 0, 2])) / bs
+        cy = 2 * (bbox_center[:, 1] - (cam_int[:, 1, 2])) / bs
 
         crop_cam_t = torch.stack(
             [tx - cx, ty - cy, tz * bbox_size / input_size], dim=-1
@@ -182,12 +155,6 @@ class BaseModel(BaseLightningModule):
         if hasattr(module, "pos_embed"):
             module.apply(partial(convert_module_to_f16, dtype=fp16_type))
             module.pos_embed.data = module.pos_embed.data.to(fp16_type)
-        elif hasattr(module, "positional_embedding"):
-            # Perception Encoder Only
-            module.apply(partial(convert_to_fp16_safe, dtype=fp16_type))
-            module.positional_embedding.data = module.positional_embedding.data.to(
-                fp16_type
-            )
         elif hasattr(module.encoder, "rope_embed"):
             # DINOv3
             module.encoder.apply(partial(convert_to_fp16_safe, dtype=fp16_type))

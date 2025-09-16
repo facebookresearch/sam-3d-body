@@ -1,29 +1,5 @@
 import os
 
-# Convert SMPL keypoints (45 joints) to OpenPose format
-SMPL_TO_OPENPOSE = [
-    24, 12, 17, 19, 21, 16, 18, 20, 0, 2, 5, 8, 1, 4,
-    7, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34
-]
-
-DEFAULT_MODEL_ROOT = (
-    "/large_experiments/3po/model/"    # FAIR cluster
-    if os.path.exists("/large_experiments/3po/model/")
-    else "/checkpoint/3po/model/"        # RSC
-)
-def with_modelroot(path):
-    return os.path.join(DEFAULT_MODEL_ROOT, path)
-
-DEFAULT_DATA_ROOT = (
-    "/large_experiments/3po/data/"    # FAIR cluster
-    if os.path.exists("/large_experiments/3po/data/")
-    else "/checkpoint/3po/data/"        # RSC
-)
-def with_dataroot(path):
-    return os.path.join(DEFAULT_DATA_ROOT, path)
-
-SMPL_MEAN_PARAMS = with_modelroot("smpl/smpl_mean_params.npz")
-SMPLX2SMPL = with_modelroot("smplx/smplx2smpl.pkl")
 
 OPENPOSE_TO_COCO = [
     0, 16, 15, 18, 17, 5, 2, 6, 3, 7, 4, 12, 9, 13, 10, 14, 11
@@ -42,9 +18,6 @@ LSP_TO_COCO = {
 }
 
 
-# Create 21x100x100x100 histogram of all 21 AMASS body pose joints using `create_pose_hist(amass_poses, nbins=100)`
-AMASS_HIST100_PATH = with_dataroot('misc/amass_poses_hist100_SMPL+H_G.npy')
-
 OPENPOSE_PERMUTATION = [0, 1, 5, 6, 7, 2, 3, 4, 8, 12, 13, 14, 9, 10, 11, 16, 15, 18, 17, 22, 23, 24, 19, 20, 21]
 J19_PERMUTATION = [5, 4, 3, 2, 1, 0, 11, 10, 9, 8, 7, 6, 12, 13, 14, 15, 16, 17, 18]
 COCO_PERMUTATION = [0, 2, 1, 4, 3, 6, 5, 8, 7, 10, 9, 12, 11, 14, 13, 16, 15]
@@ -59,20 +32,3 @@ ATLAS70_TO_OPENPOSE = {
 ATLAS70_PERMUTATION = [0, 2, 1, 4, 3, 6, 5, 8, 7, 10, 9, 12, 11, 14, 13, 18, 19, 20, 15, 16, 17, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 64, 63, 66, 65, 68, 67, 69]
 
 ATLAS70_TO_LSP = {0: 14, 1: 12, 2: 10, 3: 9, 4: 11, 5: 13, 6: 41, 7: 8, 8: 6, 9: 5, 10: 7, 11: 62, 12: 69}
-
-
-# fmt: off
-PROMPT_KEYPOINTS = {  # keypoint_idx: prompt_idx
-    "atlas70": {
-        i: i for i in range(70)
-    },  # all 70 keypoints are supported for prompting
-    "atlas70_smpl": {  # for SMPL evaluation only, using the 61 keypoint format ("wds_1223")
-        **ATLAS70_TO_OPENPOSE,
-        **{
-            33: 6, 32: 8, 31: 41, 34: 5, 35: 7, 36: 62, 26: 12, 25: 14, 29: 11, 30: 13, 50: 6,
-            52: 8, 54: 41, 49: 5, 51: 7, 53: 62, 58: 12, 60: 14, 57: 11, 59: 13, 44: 0, 55: 9, 56: 10,
-        },
-    },
-}
-KEY_BODY = [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 41, 62]  # key body joints for prompting
-# fmt: on

@@ -194,10 +194,6 @@ class PerspectiveHead(nn.Module):
         focal_length = cam_int[:, 0, 0]
         tz = 2 * focal_length / bs
 
-        # old version, without using use_intrin_center
-        # cx = 2 * (bbox_center[:, 0] - (img_size[:, 0] / 2)) / bs
-        # cy = 2 * (bbox_center[:, 1] - (img_size[:, 1] / 2)) / bs
-
         if not use_intrin_center:
             cx = 2 * (bbox_center[:, 0] - (img_size[:, 0] / 2)) / bs
             cy = 2 * (bbox_center[:, 1] - (img_size[:, 1] / 2)) / bs

@@ -79,6 +79,10 @@ def visualize_sample(img_cv2, outputs, faces):
     return rend_img
 
 
+DETECTOR_FOLDER = "/large_experiments/3po/model/cascade_mask_rcnn_vitdet"
+PROTO_PATH = "/large_experiments/3po/model/atlas_250624"
+
+
 def main(args):
     if args.output_folder == "":
         output_folder = os.path.join(
@@ -90,6 +94,8 @@ def main(args):
 
     model = SAM3DBodyEstimator(
         checkpoint_path=args.checkpoint_path,
+        proto_path=PROTO_PATH,
+        detector_path=DETECTOR_FOLDER,
     )
 
     image_extensions = ['*.jpg', '*.jpeg', '*.png', '*.gif', '*.bmp', '*.tiff', '*.webp']

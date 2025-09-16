@@ -1,18 +1,14 @@
-from typing import Optional, Tuple
+from typing import Optional
 
 import roma
 
 import torch
 import torch.nn as nn
 
-from core.metadata import SMPL_TO_OPENPOSE
-from core.models.modules.geometry_utils import perspective_projection
-
-from ..modules import aa_to_rotmat, get_intrinsic_matrix, rot6d_to_rotmat, to_2tuple
+from ..modules import rot6d_to_rotmat
 from ..modules.atlas46 import ATLAS46
 from ..modules.atlas_utils import (
     atlas46_param_hand_mask,
-    batch6DFromXYZ,
     compact_cont_to_model_params_body,
     compact_model_params_to_cont_body,
 )
@@ -37,8 +33,6 @@ class ATLAS46Head(nn.Module):
         num_face_comps: int = 10,
         atlas_model_path: str = "",
         mesh_type: str = "lod3",
-        extra_joint_regressor: str = "",
-        smpl_model_path: str = "",
         fix_kps_eye_and_chin: bool = True,
         znorm_fullbody_scales: bool = True,
         ffn_zero_bias: bool = False,
@@ -85,7 +79,7 @@ class ATLAS46Head(nn.Module):
             torch.nn.init.zeros_(self.proj.layers[-2].bias)
 
         self.mesh_type = mesh_type
-        assert self.mesh_type in {"lod3", "smpl", "smplx"}
+        assert self.mesh_type in {"lod3"}
         self.atlas = ATLAS46(
             atlas_model_path,
             num_shape_comps,
@@ -93,7 +87,7 @@ class ATLAS46Head(nn.Module):
             num_hand_comps,
             num_face_comps,
             lod=self.mesh_type,
-            load_keypoint_mapping=(self.mesh_type in ["lod3", "smpl"]),
+            load_keypoint_mapping=(self.mesh_type in ["lod3"]),
             verbose=True,
             fix_kps_eye_and_chin=fix_kps_eye_and_chin,
             znorm_fullbody_scales=znorm_fullbody_scales,
@@ -182,7 +176,7 @@ class ATLAS46Head(nn.Module):
             shape_params=pred_shape,
             expr_params=pred_face,
             do_pcblend=do_pcblend,
-            return_keypoints=(self.mesh_type in ["lod3", "smpl"]),
+            return_keypoints=(self.mesh_type in ["lod3"]),
             slim_keypoints=slim_keypoints
             and self.mesh_type == "lod3",  # only during training
         )

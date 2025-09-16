@@ -146,8 +146,6 @@ class PromptableDecoder(nn.Module):
                     token_embedding, token_augment, curr_pose_output, layer_idx
                 )
 
-        # save_pickle(all_pose_outputs, "/private/home/jinhyun1/all_pose_outputs.pkl"); print("SAVING!3"); breakpoint()
-
         out = self.norm_final(token_embedding)
 
         if self.do_interm_preds:

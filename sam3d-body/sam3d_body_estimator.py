@@ -10,7 +10,6 @@ from detectron2.config import instantiate, LazyConfig
 import detectron2.data.transforms as T
 
 from core.data.utils.io import load_image, resize_image
-from core.metadata import with_modelroot
 from core.models.meta_arch.sam3d_body import load_sam3d_body
 
 from core.data.transforms import (
@@ -25,41 +24,40 @@ from torchvision.transforms import ToTensor
 from torchvision.transforms.functional import to_tensor
 
 
-DETECTRON_CFG = with_modelroot(
-    "cascade_mask_rcnn_vitdet/cascade_mask_rcnn_vitdet_h_75ep.py"
-)
-DETECTRON_CKPT = with_modelroot("cascade_mask_rcnn_vitdet/model_final_f05665.pkl")
-
-
 class SAM3DBodyEstimator:
     def __init__(
         self,
         checkpoint_path: str = "",
+        proto_path: str = "",
         bbox_threshold: int = 0.8,
-        use_detector: bool = True,
+        detector_path: str = "",
         use_mask: bool = False,
     ):
         self.device = (torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'))
-        self.use_detector = use_detector
         self.use_mask = use_mask
 
         # Initialize human detector
-        if self.use_detector:
-            self.detector = self.init_detector(bbox_threshold)
+        self.use_detector = False
+        if len(detector_path):
+            self.detector = self.init_detector(detector_path, bbox_threshold)
             self.detector = self.detector.to(self.device)
             self.detector.eval()
+            self.use_detector = True
 
         # Initialize SAM2 if needed
         if self.use_mask:
             self.sam = self.init_sam()
         
         # Build SAM3D-Body model
-        self.model, self.cfg = load_sam3d_body(checkpoint_path)
+        self.model, self.cfg = load_sam3d_body(checkpoint_path, proto_path)
         self.faces = self.model.head_pose.atlas.faces.numpy()
         self.model = self.model.to(self.device)
         self.model.eval()
     
-    def init_detector(self, threshold):
+    def init_detector(self, detector_path, threshold):
+        DETECTRON_CFG = os.path.join(detector_path, "cascade_mask_rcnn_vitdet_h_75ep.py")
+        DETECTRON_CKPT = os.path.join(detector_path, "model_final_f05665.pkl")
+        
         detectron2_cfg = LazyConfig.load(str(DETECTRON_CFG))
         for i in range(3):
             detectron2_cfg.model.roi_heads.box_predictors[i].test_score_thresh = threshold
