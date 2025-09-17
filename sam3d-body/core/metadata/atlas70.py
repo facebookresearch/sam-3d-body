@@ -1,0 +1,522 @@
+"""The first 70 of 308 ATLAS keypoints, ignoring the rest for face keypoints"""
+
+atlas_names = ['nose', 'left-eye', 'right-eye', 'left-ear', 'right-ear', 'left-shoulder', 'right-shoulder', 'left-elbow', 'right-elbow', 'left-hip', 'right-hip', 'left-knee', 'right-knee', 'left-ankle', 'right-ankle', 'left-big-toe-tip', 'left-small-toe-tip', 'left-heel', 'right-big-toe-tip', 'right-small-toe-tip', 'right-heel', 'right-thumb-tip', 'right-thumb-first-joint', 'right-thumb-second-joint', 'right-thumb-third-joint', 'right-index-tip', 'right-index-first-joint', 'right-index-second-joint', 'right-index-third-joint', 'right-middle-tip', 'right-middle-first-joint', 'right-middle-second-joint', 'right-middle-third-joint', 'right-ring-tip', 'right-ring-first-joint', 'right-ring-second-joint', 'right-ring-third-joint', 'right-pinky-tip', 'right-pinky-first-joint', 'right-pinky-second-joint', 'right-pinky-third-joint', 'right-wrist', 'left-thumb-tip', 'left-thumb-first-joint', 'left-thumb-second-joint', 'left-thumb-third-joint', 'left-index-tip', 'left-index-first-joint', 'left-index-second-joint', 'left-index-third-joint', 'left-middle-tip', 'left-middle-first-joint', 'left-middle-second-joint', 'left-middle-third-joint', 'left-ring-tip', 'left-ring-first-joint', 'left-ring-second-joint', 'left-ring-third-joint', 'left-pinky-tip', 'left-pinky-first-joint', 'left-pinky-second-joint', 'left-pinky-third-joint', 'left-wrist', 'left-olecranon', 'right-olecranon', 'left-cubital-fossa', 'right-cubital-fossa', 'left-acromion', 'right-acromion', 'neck']
+
+pose_info = dict(
+    pose_format='atlas70',
+    paper_info=dict(
+        author='',
+        year='',
+        homepage='',
+    ),
+    min_visible_keypoints=8,
+    image_height=4096,
+    image_width=2668,
+    original_keypoint_info={
+            0: 'nose',
+            1: 'left_eye',
+            2: 'right_eye',
+            3: 'left_ear',
+            4: 'right_ear',
+            5: 'left_shoulder',
+            6: 'right_shoulder',
+            7: 'left_elbow',
+            8: 'right_elbow',
+            9: 'left_hip',
+            10: 'right_hip',
+            11: 'left_knee',
+            12: 'right_knee',
+            13: 'left_ankle',
+            14: 'right_ankle',
+            15: 'left_big_toe_tip',
+            16: 'left_small_toe_tip',
+            17: 'left_heel',
+            18: 'right_big_toe_tip',
+            19: 'right_small_toe_tip',
+            20: 'right_heel',
+            21: 'right_thumb_tip',
+            22: 'right_thumb_first_joint',
+            23: 'right_thumb_second_joint',
+            24: 'right_thumb_third_joint',
+            25: 'right_index_tip',
+            26: 'right_index_first_joint',
+            27: 'right_index_second_joint',
+            28: 'right_index_third_joint',
+            29: 'right_middle_tip',
+            30: 'right_middle_first_joint',
+            31: 'right_middle_second_joint',
+            32: 'right_middle_third_joint',
+            33: 'right_ring_tip',
+            34: 'right_ring_first_joint',
+            35: 'right_ring_second_joint',
+            36: 'right_ring_third_joint',
+            37: 'right_pinky_tip',
+            38: 'right_pinky_first_joint',
+            39: 'right_pinky_second_joint',
+            40: 'right_pinky_third_joint',
+            41: 'right_wrist',
+            42: 'left_thumb_tip',
+            43: 'left_thumb_first_joint',
+            44: 'left_thumb_second_joint',
+            45: 'left_thumb_third_joint',
+            46: 'left_index_tip',
+            47: 'left_index_first_joint',
+            48: 'left_index_second_joint',
+            49: 'left_index_third_joint',
+            50: 'left_middle_tip',
+            51: 'left_middle_first_joint',
+            52: 'left_middle_second_joint',
+            53: 'left_middle_third_joint',
+            54: 'left_ring_tip',
+            55: 'left_ring_first_joint',
+            56: 'left_ring_second_joint',
+            57: 'left_ring_third_joint',
+            58: 'left_pinky_tip',
+            59: 'left_pinky_first_joint',
+            60: 'left_pinky_second_joint',
+            61: 'left_pinky_third_joint',
+            62: 'left_wrist',
+            63: 'left_olecranon',
+            64: 'right_olecranon',
+            65: 'left_cubital_fossa',
+            66: 'right_cubital_fossa',
+            67: 'left_acromion',
+            68: 'right_acromion',
+            69: 'neck',
+            },
+    keypoint_info={
+        0: dict(name='nose', id=0, color=[51, 153, 255], type='upper', swap=''),
+        1: dict(name='left_eye', id=1, color=[51, 153, 255], type='upper', swap='right_eye'),
+        2: dict(name='right_eye', id=2, color=[51, 153, 255], type='upper', swap='left_eye'),
+        3: dict(name='left_ear', id=3, color=[51, 153, 255], type='upper', swap='right_ear'),
+        4: dict(name='right_ear', id=4, color=[51, 153, 255], type='upper', swap='left_ear'),
+        5: dict(name='left_shoulder', id=5, color=[51, 153, 255], type='upper', swap='right_shoulder'),
+        6: dict(name='right_shoulder', id=6, color=[51, 153, 255], type='upper', swap='left_shoulder'),
+        7: dict(name='left_elbow', id=7, color=[51, 153, 255], type='upper', swap='right_elbow'),
+        8: dict(name='right_elbow', id=8, color=[51, 153, 255], type='upper', swap='left_elbow'),
+        9: dict(name='left_hip', id=9, color=[51, 153, 255], type='lower', swap='right_hip'),
+        10: dict(name='right_hip', id=10, color=[51, 153, 255], type='lower', swap='left_hip'),
+        11: dict(name='left_knee', id=11, color=[51, 153, 255], type='lower', swap='right_knee'),
+        12: dict(name='right_knee', id=12, color=[51, 153, 255], type='lower', swap='left_knee'),
+        13: dict(name='left_ankle', id=13, color=[51, 153, 255], type='lower', swap='right_ankle'),
+        14: dict(name='right_ankle', id=14, color=[51, 153, 255], type='lower', swap='left_ankle'),
+
+        15: dict(name='left_big_toe', id=15, color=[51, 153, 255], type='lower', swap='right_big_toe'),
+        16: dict(name='left_small_toe', id=16, color=[51, 153, 255], type='lower', swap='right_small_toe'),
+        17: dict(name='left_heel', id=17, color=[51, 153, 255], type='lower', swap='right_heel'),
+        18: dict(name='right_big_toe', id=18, color=[51, 153, 255], type='lower', swap='left_big_toe'),
+        19: dict(name='right_small_toe', id=19, color=[51, 153, 255], type='lower', swap='left_small_toe'),
+        20: dict(name='right_heel', id=20, color=[51, 153, 255], type='lower', swap='left_heel'),
+
+        21: dict(name='right_thumb4', id=21, color=[51, 153, 255], type='upper', swap='left_thumb4'),
+        22: dict(name='right_thumb3', id=22, color=[51, 153, 255], type='upper', swap='left_thumb3'),
+        23: dict(name='right_thumb2', id=23, color=[51, 153, 255], type='upper', swap='left_thumb2'),
+        24: dict(name='right_thumb_third_joint', id=24, color=[51, 153, 255], type='upper', swap='left_thumb_third_joint'),
+
+        25: dict(name='right_forefinger4', id=25, color=[51, 153, 255], type='upper', swap='left_forefinger4'),
+        26: dict(name='right_forefinger3', id=26, color=[51, 153, 255], type='upper', swap='left_forefinger3'),
+        27: dict(name='right_forefinger2', id=27, color=[51, 153, 255], type='upper', swap='left_forefinger2'),
+        28: dict(name='right_forefinger_third_joint', id=28, color=[51, 153, 255], type='upper', swap='left_forefinger_third_joint'),
+
+        29: dict(name='right_middle_finger4', id=29, color=[51, 153, 255], type='upper', swap='left_middle_finger4'),
+        30: dict(name='right_middle_finger3', id=30, color=[51, 153, 255], type='upper', swap='left_middle_finger3'),
+        31: dict(name='right_middle_finger2', id=31, color=[51, 153, 255], type='upper', swap='left_middle_finger2'),
+        32: dict(name='right_middle_finger_third_joint', id=32, color=[51, 153, 255], type='upper', swap='left_middle_finger_third_joint'),
+
+        33: dict(name='right_ring_finger4', id=33, color=[51, 153, 255], type='upper', swap='left_ring_finger4'),
+        34: dict(name='right_ring_finger3', id=34, color=[51, 153, 255], type='upper', swap='left_ring_finger3'),
+        35: dict(name='right_ring_finger2', id=35, color=[51, 153, 255], type='upper', swap='left_ring_finger2'),
+        36: dict(name='right_ring_finger_third_joint', id=36, color=[51, 153, 255], type='upper', swap='left_ring_finger_third_joint'),
+
+        37: dict(name='right_pinky_finger4', id=37, color=[51, 153, 255], type='upper', swap='left_pinky_finger4'),
+        38: dict(name='right_pinky_finger3', id=38, color=[51, 153, 255], type='upper', swap='left_pinky_finger3'),
+        39: dict(name='right_pinky_finger2', id=39, color=[51, 153, 255], type='upper', swap='left_pinky_finger2'),
+        40: dict(name='right_pinky_finger_third_joint', id=40, color=[51, 153, 255], type='upper', swap='left_pinky_finger_third_joint'),
+
+        41: dict(name='right_wrist', id=41, color=[51, 153, 255], type='upper', swap='left_wrist'),
+
+        42: dict(name='left_thumb4', id=42, color=[51, 153, 255], type='upper', swap='right_thumb4'),
+        43: dict(name='left_thumb3', id=43, color=[51, 153, 255], type='upper', swap='right_thumb3'),
+        44: dict(name='left_thumb2', id=44, color=[51, 153, 255], type='upper', swap='right_thumb2'),
+        45: dict(name='left_thumb_third_joint', id=45, color=[51, 153, 255], type='upper', swap='right_thumb_third_joint'), ## doesnt match with wholebody
+
+        46: dict(name='left_forefinger4', id=46, color=[51, 153, 255], type='upper', swap='right_forefinger4'),
+        47: dict(name='left_forefinger3', id=47, color=[51, 153, 255], type='upper', swap='right_forefinger3'),
+        48: dict(name='left_forefinger2', id=48, color=[51, 153, 255], type='upper', swap='right_forefinger2'),
+        49: dict(name='left_forefinger_third_joint', id=49, color=[51, 153, 255], type='upper', swap='right_forefinger_third_joint'),
+
+        50: dict(name='left_middle_finger4', id=50, color=[51, 153, 255], type='upper', swap='right_middle_finger4'),
+        51: dict(name='left_middle_finger3', id=51, color=[51, 153, 255], type='upper', swap='right_middle_finger3'),
+        52: dict(name='left_middle_finger2', id=52, color=[51, 153, 255], type='upper', swap='right_middle_finger2'),
+        53: dict(name='left_middle_finger_third_joint', id=53, color=[51, 153, 255], type='upper', swap='right_middle_finger_third_joint'),
+
+        54: dict(name='left_ring_finger4', id=54, color=[51, 153, 255], type='upper', swap='right_ring_finger4'),
+        55: dict(name='left_ring_finger3', id=55, color=[51, 153, 255], type='upper', swap='right_ring_finger3'),
+        56: dict(name='left_ring_finger2', id=56, color=[51, 153, 255], type='upper', swap='right_ring_finger2'),
+        57: dict(name='left_ring_finger_third_joint', id=57, color=[51, 153, 255], type='upper', swap='right_ring_finger_third_joint'),
+
+        58: dict(name='left_pinky_finger4', id=58, color=[51, 153, 255], type='upper', swap='right_pinky_finger4'),
+        59: dict(name='left_pinky_finger3', id=59, color=[51, 153, 255], type='upper', swap='right_pinky_finger3'),
+        60: dict(name='left_pinky_finger2', id=60, color=[51, 153, 255], type='upper', swap='right_pinky_finger2'),
+        61: dict(name='left_pinky_finger_third_joint', id=61, color=[51, 153, 255], type='upper', swap='right_pinky_finger_third_joint'),
+
+        62: dict(name='left_wrist', id=62, color=[51, 153, 255], type='upper', swap='right_wrist'),
+
+        63: dict(name='left_olecranon', id=63, color=[51, 153, 255], type='', swap='right_olecranon'),
+        64: dict(name='right_olecranon', id=64, color=[51, 153, 255], type='', swap='left_olecranon'),
+        65: dict(name='left_cubital_fossa', id=65, color=[51, 153, 255], type='', swap='right_cubital_fossa'),
+        66: dict(name='right_cubital_fossa', id=66, color=[51, 153, 255], type='', swap='left_cubital_fossa'),
+        67: dict(name='left_acromion', id=67, color=[51, 153, 255], type='', swap='right_acromion'),
+        68: dict(name='right_acromion', id=68, color=[51, 153, 255], type='', swap='left_acromion'),
+        69: dict(name='neck', id=69, color=[51, 153, 255], type='', swap=''),
+    },
+    skeleton_info={
+        0:
+        dict(link=('left_ankle', 'left_knee'), id=0, color=[0, 255, 0]),
+        1:
+        dict(link=('left_knee', 'left_hip'), id=1, color=[0, 255, 0]),
+        2:
+        dict(link=('right_ankle', 'right_knee'), id=2, color=[255, 128, 0]),
+        3:
+        dict(link=('right_knee', 'right_hip'), id=3, color=[255, 128, 0]),
+        4:
+        dict(link=('left_hip', 'right_hip'), id=4, color=[51, 153, 255]),
+        5:
+        dict(link=('left_shoulder', 'left_hip'), id=5, color=[51, 153, 255]),
+        6:
+        dict(link=('right_shoulder', 'right_hip'), id=6, color=[51, 153, 255]),
+        7:
+        dict(
+            link=('left_shoulder', 'right_shoulder'),
+            id=7,
+            color=[51, 153, 255]),
+        8:
+        dict(link=('left_shoulder', 'left_elbow'), id=8, color=[0, 255, 0]),
+        9:
+        dict(
+            link=('right_shoulder', 'right_elbow'), id=9, color=[255, 128, 0]),
+        10:
+        dict(link=('left_elbow', 'left_wrist'), id=10, color=[0, 255, 0]),
+        11:
+        dict(link=('right_elbow', 'right_wrist'), id=11, color=[255, 128, 0]),
+        12:
+        dict(link=('left_eye', 'right_eye'), id=12, color=[51, 153, 255]),
+        13:
+        dict(link=('nose', 'left_eye'), id=13, color=[51, 153, 255]),
+        14:
+        dict(link=('nose', 'right_eye'), id=14, color=[51, 153, 255]),
+        15:
+        dict(link=('left_eye', 'left_ear'), id=15, color=[51, 153, 255]),
+        16:
+        dict(link=('right_eye', 'right_ear'), id=16, color=[51, 153, 255]),
+        17:
+        dict(link=('left_ear', 'left_shoulder'), id=17, color=[51, 153, 255]),
+        18:
+        dict(
+            link=('right_ear', 'right_shoulder'), id=18, color=[51, 153, 255]),
+        19:
+        dict(link=('left_ankle', 'left_big_toe'), id=19, color=[0, 255, 0]),
+        20:
+        dict(link=('left_ankle', 'left_small_toe'), id=20, color=[0, 255, 0]),
+        21:
+        dict(link=('left_ankle', 'left_heel'), id=21, color=[0, 255, 0]),
+        22:
+        dict(
+            link=('right_ankle', 'right_big_toe'), id=22, color=[255, 128, 0]),
+        23:
+        dict(
+            link=('right_ankle', 'right_small_toe'),
+            id=23,
+            color=[255, 128, 0]),
+        24:
+        dict(link=('right_ankle', 'right_heel'), id=24, color=[255, 128, 0]),
+        25:
+        dict(
+            link=('left_wrist', 'left_thumb_third_joint'), id=25, color=[255, 128,
+                                                                  0]),
+        26:
+        dict(link=('left_thumb_third_joint', 'left_thumb2'), id=26, color=[255, 128, 0]),
+        27:
+        dict(link=('left_thumb2', 'left_thumb3'), id=27, color=[255, 128, 0]),
+        28:
+        dict(link=('left_thumb3', 'left_thumb4'), id=28, color=[255, 128, 0]),
+        29:
+        dict(
+            link=('left_wrist', 'left_forefinger_third_joint'),
+            id=29,
+            color=[255, 153, 255]),
+        30:
+        dict(
+            link=('left_forefinger_third_joint', 'left_forefinger2'),
+            id=30,
+            color=[255, 153, 255]),
+        31:
+        dict(
+            link=('left_forefinger2', 'left_forefinger3'),
+            id=31,
+            color=[255, 153, 255]),
+        32:
+        dict(
+            link=('left_forefinger3', 'left_forefinger4'),
+            id=32,
+            color=[255, 153, 255]),
+        33:
+        dict(
+            link=('left_wrist', 'left_middle_finger_third_joint'),
+            id=33,
+            color=[102, 178, 255]),
+        34:
+        dict(
+            link=('left_middle_finger_third_joint', 'left_middle_finger2'),
+            id=34,
+            color=[102, 178, 255]),
+        35:
+        dict(
+            link=('left_middle_finger2', 'left_middle_finger3'),
+            id=35,
+            color=[102, 178, 255]),
+        36:
+        dict(
+            link=('left_middle_finger3', 'left_middle_finger4'),
+            id=36,
+            color=[102, 178, 255]),
+        37:
+        dict(
+            link=('left_wrist', 'left_ring_finger_third_joint'),
+            id=37,
+            color=[255, 51, 51]),
+        38:
+        dict(
+            link=('left_ring_finger_third_joint', 'left_ring_finger2'),
+            id=38,
+            color=[255, 51, 51]),
+        39:
+        dict(
+            link=('left_ring_finger2', 'left_ring_finger3'),
+            id=39,
+            color=[255, 51, 51]),
+        40:
+        dict(
+            link=('left_ring_finger3', 'left_ring_finger4'),
+            id=40,
+            color=[255, 51, 51]),
+        41:
+        dict(
+            link=('left_wrist', 'left_pinky_finger_third_joint'),
+            id=41,
+            color=[0, 255, 0]),
+        42:
+        dict(
+            link=('left_pinky_finger_third_joint', 'left_pinky_finger2'),
+            id=42,
+            color=[0, 255, 0]),
+        43:
+        dict(
+            link=('left_pinky_finger2', 'left_pinky_finger3'),
+            id=43,
+            color=[0, 255, 0]),
+        44:
+        dict(
+            link=('left_pinky_finger3', 'left_pinky_finger4'),
+            id=44,
+            color=[0, 255, 0]),
+        45:
+        dict(
+            link=('right_wrist', 'right_thumb_third_joint'),
+            id=45,
+            color=[255, 128, 0]),
+        46:
+        dict(
+            link=('right_thumb_third_joint', 'right_thumb2'), id=46, color=[255, 128, 0]),
+        47:
+        dict(
+            link=('right_thumb2', 'right_thumb3'), id=47, color=[255, 128, 0]),
+        48:
+        dict(
+            link=('right_thumb3', 'right_thumb4'), id=48, color=[255, 128, 0]),
+        49:
+        dict(
+            link=('right_wrist', 'right_forefinger_third_joint'),
+            id=49,
+            color=[255, 153, 255]),
+        50:
+        dict(
+            link=('right_forefinger_third_joint', 'right_forefinger2'),
+            id=50,
+            color=[255, 153, 255]),
+        51:
+        dict(
+            link=('right_forefinger2', 'right_forefinger3'),
+            id=51,
+            color=[255, 153, 255]),
+        52:
+        dict(
+            link=('right_forefinger3', 'right_forefinger4'),
+            id=52,
+            color=[255, 153, 255]),
+        53:
+        dict(
+            link=('right_wrist', 'right_middle_finger_third_joint'),
+            id=53,
+            color=[102, 178, 255]),
+        54:
+        dict(
+            link=('right_middle_finger_third_joint', 'right_middle_finger2'),
+            id=54,
+            color=[102, 178, 255]),
+        55:
+        dict(
+            link=('right_middle_finger2', 'right_middle_finger3'),
+            id=55,
+            color=[102, 178, 255]),
+        56:
+        dict(
+            link=('right_middle_finger3', 'right_middle_finger4'),
+            id=56,
+            color=[102, 178, 255]),
+        57:
+        dict(
+            link=('right_wrist', 'right_ring_finger_third_joint'),
+            id=57,
+            color=[255, 51, 51]),
+        58:
+        dict(
+            link=('right_ring_finger_third_joint', 'right_ring_finger2'),
+            id=58,
+            color=[255, 51, 51]),
+        59:
+        dict(
+            link=('right_ring_finger2', 'right_ring_finger3'),
+            id=59,
+            color=[255, 51, 51]),
+        60:
+        dict(
+            link=('right_ring_finger3', 'right_ring_finger4'),
+            id=60,
+            color=[255, 51, 51]),
+        61:
+        dict(
+            link=('right_wrist', 'right_pinky_finger_third_joint'),
+            id=61,
+            color=[0, 255, 0]),
+        62:
+        dict(
+            link=('right_pinky_finger_third_joint', 'right_pinky_finger2'),
+            id=62,
+            color=[0, 255, 0]),
+        63:
+        dict(
+            link=('right_pinky_finger2', 'right_pinky_finger3'),
+            id=63,
+            color=[0, 255, 0]),
+        64:
+        dict(
+            link=('right_pinky_finger3', 'right_pinky_finger4'),
+            id=64,
+            color=[0, 255, 0])
+    },
+    joint_weights=[1.] * 70,
+    body_keypoint_names=[
+        'nose',
+        'left_eye',
+        'right_eye',
+        'left_ear',
+        'right_ear',
+        'left_shoulder',
+        'right_shoulder',
+        'left_elbow',
+        'right_elbow',
+        'left_wrist',
+        'right_wrist',
+        'left_hip',
+        'right_hip',
+        'left_knee',
+        'right_knee',
+        'left_ankle',
+        'right_ankle',
+    ],
+    foot_keypoint_names=[
+        'left_big_toe',
+        'left_small_toe',
+        'left_heel',
+        'right_big_toe',
+        'right_small_toe',
+        'right_heel'
+    ],
+    left_hand_keypoint_names=[
+        'left_thumb4',
+        'left_thumb3',
+        'left_thumb2',
+        'left_thumb_third_joint',
+        'left_forefinger4',
+        'left_forefinger3',
+        'left_forefinger2',
+        'left_forefinger_third_joint',
+        'left_middle_finger4',
+        'left_middle_finger3',
+        'left_middle_finger2',
+        'left_middle_finger_third_joint',
+        'left_ring_finger4',
+        'left_ring_finger3',
+        'left_ring_finger2',
+        'left_ring_finger_third_joint',
+        'left_pinky_finger4',
+        'left_pinky_finger3',
+        'left_pinky_finger2',
+        'left_pinky_finger_third_joint'
+    ],
+    right_hand_keypoint_names=[
+        'right_thumb4',
+        'right_thumb3',
+        'right_thumb2',
+        'right_thumb_third_joint',
+        'right_forefinger4',
+        'right_forefinger3',
+        'right_forefinger2',
+        'right_forefinger_third_joint',
+        'right_middle_finger4',
+        'right_middle_finger3',
+        'right_middle_finger2',
+        'right_middle_finger_third_joint',
+        'right_ring_finger4',
+        'right_ring_finger3',
+        'right_ring_finger2',
+        'right_ring_finger_third_joint',
+        'right_pinky_finger4',
+        'right_pinky_finger3',
+        'right_pinky_finger2',
+        'right_pinky_finger_third_joint'
+    ],
+    ## 7 of them
+    extra_keypoint_names=[
+        'neck',
+        'left_olecranon',
+        'right_olecranon',
+        'left_cubital_fossa',
+        'right_cubital_fossa',
+        'left_acromion',
+        'right_acromion',
+    ],
+    sigmas=[],
+)
+
+
+if __name__ == "__main__":
+    from openpose import pose_info as openpose_pose_info
+
+    openpose_names = [openpose_pose_info['keypoint_info'][idx]['name'] for idx in range(25)]
+    atlas_names = [name.replace("-", "_") for name in atlas_names]
+    mapping = []
+    for i, name in enumerate(openpose_names):
+        if name not in atlas_names:
+            if "toe" in name:
+                name += "_tip"
+            else:
+                continue
+        mapping.append(f"{i}: {atlas_names.index(name)},")
+    print(len(mapping))
+    print(' '.join(mapping))
+
+    name2idx_mapping = {val['name']: idx for idx, val in pose_info['keypoint_info'].items()}
+    flip_mapping = [(name2idx_mapping[val['swap']] if len(val['swap']) else idx) for idx, val in pose_info['keypoint_info'].items()]
+    print(flip_mapping)
