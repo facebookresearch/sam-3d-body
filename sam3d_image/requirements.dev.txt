@@ -1,4 +1,0 @@
-pytest
-findpydeps
-pipdeptree
-lovely_tensors

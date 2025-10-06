@@ -12,7 +12,7 @@
 
 ## Latest updates
 
-**10/15/2025 -- Checkpoints Launched, Dataset Released, Web Demo and Paper are out**
+**10/20/2025 -- Checkpoints Launched, Dataset Released, Web Demo and Paper are out**
 - < MORE DETAILS HERE >
 
 ## Installation
