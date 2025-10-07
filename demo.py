@@ -80,13 +80,13 @@ def visualize_sample(img_cv2, outputs, faces):
 
 
 DETECTOR_FOLDER = "/large_experiments/3po/model/cascade_mask_rcnn_vitdet"
-PROTO_PATH = "/large_experiments/3po/model/atlas_250624"
+PROTO_PATH = "/large_experiments/3po/model/atlas_250825"
 
 
 def main(args):
     if args.output_folder == "":
         output_folder = os.path.join(
-            "./output", os.path.basename(args.image_folder) + "-" + args.model
+            "./output", os.path.basename(args.image_folder)
         )
     else:
         output_folder = args.output_folder
