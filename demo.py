@@ -103,7 +103,6 @@ def main(args):
 
     for image_path in tqdm(images_list):
         outputs = model.process_one_image(image_path)
-        breakpoint()
 
         # TODO [Devansh?]: change visualization stuffs to the demo-version Devansh/Soyong are using
         img = cv2.imread(image_path)
