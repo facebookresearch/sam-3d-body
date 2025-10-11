@@ -80,8 +80,8 @@ def visualize_sample(img_cv2, outputs, faces):
 
 
 DETECTOR_FOLDER = "/large_experiments/3po/model/cascade_mask_rcnn_vitdet"
-PROTO_PATH = "/large_experiments/3po/model/atlas_250825"
-
+# PROTO_PATH = "/large_experiments/3po/model/atlas_250825"
+PROTO_PATH = "/large_experiments/3po/model/atlas_250926_dev2/assets"
 
 def main(args):
     if args.output_folder == "":

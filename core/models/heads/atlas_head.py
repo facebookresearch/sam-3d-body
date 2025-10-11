@@ -7,6 +7,7 @@ import torch.nn as nn
 
 from ..modules import rot6d_to_rotmat
 from ..modules.atlas46 import ATLAS46
+from ..modules.proto import Proto
 from ..modules.atlas_utils import (
     atlas46_param_hand_mask,
     compact_cont_to_model_params_body,
@@ -80,19 +81,19 @@ class ATLAS46Head(nn.Module):
 
         self.mesh_type = mesh_type
         assert self.mesh_type in {"lod3"}
-        self.atlas = ATLAS46(
+        self.atlas = Proto(
             atlas_model_path,
-            num_shape_comps,
-            num_scale_comps,
-            num_hand_comps,
-            num_face_comps,
-            lod=self.mesh_type,
-            load_keypoint_mapping=(self.mesh_type in ["lod3"]),
+            # num_shape_comps,
+            num_hand_scale_comps=num_scale_comps - 18,
+            num_hand_pose_comps=num_hand_comps,
+            # num_face_comps,
+            lod=self.mesh_type if self.mesh_type != "lod3" else "lod1",
+            load_keypoint_mapping=(self.mesh_type in ["lod3", "smpl"]),
             verbose=True,
-            fix_kps_eye_and_chin=fix_kps_eye_and_chin,
-            znorm_fullbody_scales=znorm_fullbody_scales,
-            num_hand_shape_comps=num_hand_shape_comps,
-            enable_slim_keypoint_mapping=enable_slim_keypoint_mapping,
+            # fix_kps_eye_and_chin=fix_kps_eye_and_chin,
+            # znorm_fullbody_scales=znorm_fullbody_scales,
+            # num_hand_shape_comps=num_hand_shape_comps,
+            # enable_slim_keypoint_mapping=enable_slim_keypoint_mapping,
         )
         for param in self.atlas.parameters():
             param.requires_grad = False

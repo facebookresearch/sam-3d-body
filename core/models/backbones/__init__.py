@@ -16,6 +16,18 @@ def create_backbone(name, cfg=None, pretrained=False, drop_path=0.0):
         from .vit_hmr2 import vit_b
 
         backbone = vit_b(cfg)
+    elif name in ["vit_hmr_triplet"]:
+        from .vit_hmr2 import vit_triplet
+
+        backbone = vit_triplet(cfg)
+    elif name in ["vit_hmr_triplet_512_384"]:
+        from .vit_hmr2 import vit512_384_triplet
+
+        backbone = vit512_384_triplet(cfg)
+    elif name in ["vit_l_triplet_512_384"]:
+        from .vit_hmr2 import vit_l_512_384_triplet
+
+        backbone = vit_l_512_384_triplet(cfg)
     else:
         raise NotImplementedError("Backbone type is not implemented")
 
