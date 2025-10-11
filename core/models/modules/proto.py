@@ -191,14 +191,45 @@ class Proto(nn.Module):
 
         # This drops in the hand poses from hand_pose_params (PCA 6D) into full_pose_params.
         # Split into left and right hands
-        left_hand_params, right_hand_params = torch.split(
-            hand_pose_params, [self.num_hand_pose_comps, self.num_hand_pose_comps], dim=1)
+        if hand_pose_params.shape[1] == 108:
+            left_hand_params, right_hand_params = torch.split(
+                hand_pose_params, [54, 54], dim=1
+            )
 
-        # Change from cont to model params
-        left_hand_params_model_params = compact_cont_to_model_params_hand(
-            self.hand_pose_mean + torch.einsum('da,ab->db', left_hand_params, self.hand_pose_comps))
-        right_hand_params_model_params = compact_cont_to_model_params_hand(
-            self.hand_pose_mean + torch.einsum('da,ab->db', right_hand_params, self.hand_pose_comps))
+            # Change from cont to model params
+            left_hand_params_model_params = compact_cont_to_model_params_hand(
+                self.hand_pose_mean
+                + left_hand_params
+            )
+            right_hand_params_model_params = compact_cont_to_model_params_hand(
+                self.hand_pose_mean
+                + right_hand_params
+            )
+        else:
+            assert hand_pose_params.shape[1] == 64
+            left_hand_params, right_hand_params = torch.split(
+                hand_pose_params, [32, 32], dim=1
+            )
+
+            # Change from cont to model params
+            if not hasattr(self, 'hand_pose_comps_ori'):
+                left_hand_params_model_params = compact_cont_to_model_params_hand(
+                    self.hand_pose_mean
+                    + torch.einsum("da,ab->db", left_hand_params, self.hand_pose_comps)
+                )
+                right_hand_params_model_params = compact_cont_to_model_params_hand(
+                    self.hand_pose_mean
+                    + torch.einsum("da,ab->db", right_hand_params, self.hand_pose_comps)
+                )
+            else:
+                left_hand_params_model_params = compact_cont_to_model_params_hand(
+                    self.hand_pose_mean
+                    + torch.einsum("da,ab->db", left_hand_params, self.hand_pose_comps_ori)
+                )
+                right_hand_params_model_params = compact_cont_to_model_params_hand(
+                    self.hand_pose_mean
+                    + torch.einsum("da,ab->db", right_hand_params, self.hand_pose_comps_ori)
+                )
 
         # Drop it in
         full_pose_params[:, self.hand_joint_idxs_left] = left_hand_params_model_params
@@ -218,11 +249,15 @@ class Proto(nn.Module):
                 do_pcblend=True,
                 return_joint_coords=False,
                 return_model_params=False,
-                return_pcblend=False,
+                return_joint_rotations=False,
+                return_joint_params=False,
                 mask_flexibles=False,
                 mask_flexibles_pose_only=False,
                 scale_offsets=None,
                 vertex_offsets=None):
+        
+        if body_pose_params.shape[-1] == 133:
+            body_pose_params = body_pose_params[..., :130]
 
         # Convert from scale and shape params to actual scales and vertices
         ## Add singleton batches in case...
@@ -307,8 +342,10 @@ class Proto(nn.Module):
             to_return = to_return + [curr_joint_coords]
         if return_model_params:
             to_return = to_return + [model_params]
-        if return_pcblend:
-            to_return = to_return + [pose_corrective_offsets]
+        if return_joint_rotations:
+            to_return = to_return + [joint_state_r]
+        if return_joint_params:
+            to_return = to_return + [joint_params]
 
         if len(to_return) == 1: return to_return[0]
         else: return tuple(to_return)

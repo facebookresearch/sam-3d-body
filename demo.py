@@ -108,7 +108,7 @@ def main(args):
         img = cv2.imread(image_path)
         rend_img = visualize_sample(img, outputs, model.faces)
         for i, img in enumerate(rend_img):
-            cv2.imwrite(f"{output_folder}/{os.path.basename(image_path)[:-4]}_{i}.jpg", img)
+            cv2.imwrite(f"{output_folder}/{os.path.basename(image_path)[:-4]}_{i}.jpg", img.astype(np.uint8))
 
 
 

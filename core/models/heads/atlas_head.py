@@ -251,9 +251,9 @@ class ATLAS46Head(nn.Module):
 
         # Run everything through atlas
         output = self.atlas(
-            global_trans=global_trans,  # global_trans==0
+            global_trans=global_trans,
             global_rot=global_rot_euler,
-            body_pose_params=pred_pose_euler,  # Drop jaw
+            body_pose_params=pred_pose_euler,
             hand_pose_params=pred_hand,
             scale_params=pred_scale,
             shape_params=pred_shape,
@@ -261,6 +261,8 @@ class ATLAS46Head(nn.Module):
             do_pcblend=do_pcblend,
             return_keypoints=(self.mesh_type in ["lod3", "smpl"]),
             return_joint_coords=self.mesh_type == "lod3",
+            return_joint_rotations=self.mesh_type == "lod3",
+            return_joint_params=self.mesh_type == "lod3",
         )
 
         # Some existing code to get joints and fix camera system

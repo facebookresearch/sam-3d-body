@@ -417,7 +417,6 @@ class SAM3DBodyEstimator:
         self.full_output = copy.deepcopy(full_output)
 
         out = pose_output["atlas"]
-        print(out["face"])
         out = recursive_to(out, "cpu")
         out = recursive_to(out, "numpy")
         all_out = []
