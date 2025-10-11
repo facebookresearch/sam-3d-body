@@ -296,24 +296,32 @@ class SAM3DBodyTriplet(BaseModel):
             self.cfg.MODEL.DECODER, context_dim=self.backbone.embed_dims
         )
 
+        # TODO:[Jinkun] whether we keep this for inference?
         # Manually convert the torso of the model to fp16.
-        if self.cfg.TRAIN.USE_FP16:
-            self.convert_to_fp16()
-            # self.convert_backbone_to_fp16(self.hand_backbone)
-            if self.cfg.MODEL.get('TRIPLET_FUSION_METHOD', 'v0') =="v0":
-                for layer in self.attention_fusion.modules():
-                    layer.half()
-            if self.cfg.TRAIN.get("FP16_TYPE", "float16") == "float16":
-                self.backbone_dtype = torch.float16
-            else:
-                self.backbone_dtype = torch.bfloat16
-        else:
-            self.convert_to_fp32()
-            # self.convert_backbone_to_fp32(self.hand_backbone)
-            if self.cfg.MODEL.get('TRIPLET_FUSION_METHOD', 'v0') =="v0":
-                for layer in self.attention_fusion.modules():
-                    layer.float()
-            self.backbone_dtype = torch.float32
+        # if self.cfg.TRAIN.USE_FP16:
+        #     self.convert_to_fp16()
+        #     # self.convert_backbone_to_fp16(self.hand_backbone)
+        #     if self.cfg.MODEL.get('TRIPLET_FUSION_METHOD', 'v0') =="v0":
+        #         for layer in self.attention_fusion.modules():
+        #             layer.half()
+        #     if self.cfg.TRAIN.get("FP16_TYPE", "float16") == "float16":
+        #         self.backbone_dtype = torch.float16
+        #     else:
+        #         self.backbone_dtype = torch.bfloat16
+        # else:
+        #     self.convert_to_fp32()
+        #     # self.convert_backbone_to_fp32(self.hand_backbone)
+        #     if self.cfg.MODEL.get('TRIPLET_FUSION_METHOD', 'v0') =="v0":
+        #         for layer in self.attention_fusion.modules():
+        #             layer.float()
+        #     self.backbone_dtype = torch.float32
+
+        # self.convert_to_fp32()
+        # # self.convert_backbone_to_fp32(self.hand_backbone)
+        # if self.cfg.MODEL.get('TRIPLET_FUSION_METHOD', 'v0') =="v0":
+        #     for layer in self.attention_fusion.modules():
+        #         layer.float()
+        self.backbone_dtype = torch.float32
 
         # Disable automatic optimization since we use our own lr_scheduler
         self.automatic_optimization = False

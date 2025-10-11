@@ -134,15 +134,15 @@ class SAM3DBody(BaseModel):
         )
 
         # Manually convert the torso of the model to fp16.
-        if self.cfg.TRAIN.USE_FP16:
-            self.convert_to_fp16()
-            if self.cfg.TRAIN.get("FP16_TYPE", "float16") == "float16":
-                self.backbone_dtype = torch.float16
-            else:
-                self.backbone_dtype = torch.bfloat16
-        else:
-            self.convert_to_fp32()
-            self.backbone_dtype = torch.float32
+        # if self.cfg.TRAIN.USE_FP16:
+        #     self.convert_to_fp16()
+        #     if self.cfg.TRAIN.get("FP16_TYPE", "float16") == "float16":
+        #         self.backbone_dtype = torch.float16
+        #     else:
+        #         self.backbone_dtype = torch.bfloat16
+        # else:
+        #     self.convert_to_fp32()
+        #     self.backbone_dtype = torch.float32
 
         if self.cfg.MODEL.get("RAY_CONDITION_TYPE", None) is not None:
             if self.cfg.MODEL.BACKBONE.TYPE in [

@@ -134,7 +134,8 @@ class SAM3DBodyEstimator:
         if self.fov_estimator == "moge":
             self.moge_model = get_moge_model()
         elif self.fov_estimator == "camerahmr":
-            self.camerahmr = CameraHMR()
+            # self.camerahmr = CameraHMR() # TODO: implement
+            self.camerahmr = None 
         else:
             assert False, "not supported fov estimator {}".format(self.fov_estimator)
 
@@ -359,11 +360,12 @@ class SAM3DBodyEstimator:
         batch["person_valid"] = torch.ones((1, max_num_person))
 
         # FIXME: Use default camera intrinsics for now
-        # batch["cam_int"] = torch.tensor(
-        #     [[[(height ** 2 + width ** 2) ** 0.5, 0, width / 2.],
-        #     [0, (height ** 2 + width ** 2) ** 0.5, height / 2.],
-        #     [0, 0, 1]]],
-        # ).to(batch["img"])
+        # TODO:[Jinkun] use moge or camerahmr
+        batch["cam_int"] = torch.tensor(
+            [[[(height ** 2 + width ** 2) ** 0.5, 0, width / 2.],
+            [0, (height ** 2 + width ** 2) ** 0.5, height / 2.],
+            [0, 0, 1]]],
+        ).to(batch["img"])
 
         #############################################################
 
@@ -376,9 +378,9 @@ class SAM3DBodyEstimator:
         if self.cfg.MODEL.NAME == "promptable_threepo":
             self.model._initialize_batch(batch)
             with torch.no_grad():
-                batch["cam_int"] = get_cam_intrinsics(self.camerahmr, batch).to(
-                    batch["img"]
-                )
+                # batch["cam_int"] = get_cam_intrinsics(self.camerahmr, batch).to(
+                #     batch["img"]
+                # )
                 pose_output, full_output = self.model.forward_step(batch)
         else:
             # triplet
@@ -391,9 +393,9 @@ class SAM3DBodyEstimator:
                 else:
                     fov_model = self.camerahmr
 
-                batch["cam_int"] = get_cam_intrinsics(fov_model, batch).to(
-                    batch["img"]
-                )
+                # batch["cam_int"] = get_cam_intrinsics(fov_model, batch).to(
+                #     batch["img"]
+                # )
 
                 pose_output_ab, full_output_ab = self.model.forward_step(batch)
                 if self.just_left_hand:
@@ -402,12 +404,6 @@ class SAM3DBodyEstimator:
                     batch['left_scale'] = batch["bbox_scale"].cpu().numpy().squeeze(0)
                     batch['right_center'] = np.array([[0, 0]], dtype=np.float32)
                     batch['right_scale'] = np.array([[0.5, 0.5]], dtype=np.float32)
-                    # updated_batch['lhand_img'] = F.interpolate(
-                    #     updated_batch['img'].flatten(0, 1),
-                    #     size=updated_batch['lhand_img'].shape[-2:],
-                    #     mode='bilinear'
-                    # ).unflatten(0, updated_batch['img'].shape[:2])
-                    # updated_batch['rhand_img'][...] = 0
                     updated_batch = self.model.get_hand_box(pose_output_ab, batch, scale_factor=self.scale_factor)
                     updated_batch['rhand_img'][...] = 0
                 else:

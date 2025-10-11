@@ -218,11 +218,53 @@ class Proto(nn.Module):
                 do_pcblend=True,
                 return_joint_coords=False,
                 return_model_params=False,
-                return_pcblend=False,
                 mask_flexibles=False,
                 mask_flexibles_pose_only=False,
                 scale_offsets=None,
-                vertex_offsets=None):
+                vertex_offsets=None,
+                slim_keypoints=False,
+                return_joint_rotations=False,
+                return_joint_params=False,
+            ):
+
+        assert not slim_keypoints
+        if body_pose_params.shape[-1] == 133:
+            body_pose_params = body_pose_params[..., :130]
+            
+        if os.environ.get('ZERO_HAND', "0") == "1":
+            # This is an unbelievable hack
+            print("ZEROING OUT HAND")
+            # body_pose_params = body_pose_params.clone()
+            # body_pose_params[..., [32, 33, 42, 43]] = torch.FloatTensor([[ 0.2134464 , -0.3877203 ,  0.17775373, -0.43506554]]).cuda()
+            hand_pose_params = hand_pose_params.clone()
+            if hand_pose_params.shape[-1] == 64:
+                hand_pose_params[...] = torch.FloatTensor([ 0.60720223,  0.07500209, -0.03285376, -0.2053549 , -0.17148465,
+                    0.26726273,  0.1794208 , -0.18497463, -0.15640062,  0.09794571,
+                    0.24042967, -0.41130725, -0.12343965,  0.06465638, -0.5233267 ,
+                    -0.9388142 ,  0.4494357 , -0.27890766,  0.17729089, -0.07480174,
+                    -0.25141224, -0.01817356, -0.00400371, -0.01773551,  0.15311617,
+                    -0.04983772,  0.19858299,  0.21404092,  0.15088876, -0.14906985,
+                    0.12159939, -0.12288672,  0.58869326,  0.08022392, -0.18389095,
+                    -0.29275241, -0.18641567,  0.24420524,  0.37931398, -0.30575007,
+                    -0.25855404,  0.0782503 ,  0.4285042 , -0.46332794,  0.1848662 ,
+                    0.09675991, -0.59010047, -0.90106446,  0.3820503 , -0.10754132,
+                    0.24496357, -0.06562126, -0.38107422,  0.05865024, -0.03641961,
+                    0.08158261,  0.01217111, -0.04469005,  0.35922152,  0.05598378,
+                    0.14038268, -0.18285632,  0.1296904 , -0.24280865]).cuda()
+            else:
+                hand_pose_params[...] = (torch.FloatTensor([ 0.60720223,  0.07500209, -0.03285376, -0.2053549 , -0.17148465,
+                    0.26726273,  0.1794208 , -0.18497463, -0.15640062,  0.09794571,
+                    0.24042967, -0.41130725, -0.12343965,  0.06465638, -0.5233267 ,
+                    -0.9388142 ,  0.4494357 , -0.27890766,  0.17729089, -0.07480174,
+                    -0.25141224, -0.01817356, -0.00400371, -0.01773551,  0.15311617,
+                    -0.04983772,  0.19858299,  0.21404092,  0.15088876, -0.14906985,
+                    0.12159939, -0.12288672,  0.58869326,  0.08022392, -0.18389095,
+                    -0.29275241, -0.18641567,  0.24420524,  0.37931398, -0.30575007,
+                    -0.25855404,  0.0782503 ,  0.4285042 , -0.46332794,  0.1848662 ,
+                    0.09675991, -0.59010047, -0.90106446,  0.3820503 , -0.10754132,
+                    0.24496357, -0.06562126, -0.38107422,  0.05865024, -0.03641961,
+                    0.08158261,  0.01217111, -0.04469005,  0.35922152,  0.05598378,
+                    0.14038268, -0.18285632,  0.1296904 , -0.24280865]).cuda().reshape(2, 32) @ self.hand_pose_comps_ori).flatten()
 
         # Convert from scale and shape params to actual scales and vertices
         ## Add singleton batches in case...
@@ -251,14 +293,16 @@ class Proto(nn.Module):
         if hand_pose_params is not None:
             full_pose_params = self.replace_hands_in_pose(full_pose_params, hand_pose_params)
         ## Get the 1512 joint params
+        if scales.shape[0] == 1:
+            scales = scales.squeeze(0)
         ## Optinally mask out flexibles
         if mask_flexibles and mask_flexibles_pose_only:
             full_pose_params = full_pose_params * ~self.flexible_model_params_mask[None, :136]
-        model_params = torch.cat([full_pose_params, scales], dim=1)
+        model_params = self.lbs_fn.assemblePoseAndScale(full_pose_params, scales)
         ## Optinally mask out flexibles
         if mask_flexibles and not mask_flexibles_pose_only:
             model_params = model_params * ~self.flexible_model_params_mask[None, :]
-        joint_params = model_params @ self.lbs_fn_infos.param_transform.T
+        joint_params = self.lbs_fn.jointParamsFromModelParams(model_params)
 
         # Get pose correctives
         if do_pcblend:
@@ -267,31 +311,7 @@ class Proto(nn.Module):
             template_verts = template_verts + pose_corrective_offsets
 
         # Finally, LBS
-        state = pym_geo.model_parameters_to_skeleton_state(self.lbs_fn, model_params.cpu())
-        curr_skinned_verts = self.lbs_fn.skin_points(state, template_verts.cpu()).to(model_params.device)
-        ## Get joints. There must be some way to get this from momentum, but I have no clue yet.
-        joint_params = joint_params.unflatten(1, (-1, 7))
-        local_state_t = joint_params[:, :, :3] + self.lbs_fn_infos.joint_offset
-        local_state_r = self.lbs_fn_infos.joint_rotation[None, :, :, :] @ roma.euler_to_rotmat('xyz', joint_params[:, :, 3:6])
-        local_state_s = 2 ** joint_params[:, :, [6]]
-        joint_state_t = torch.zeros_like(local_state_t)
-        joint_state_r = torch.zeros_like(local_state_r)
-        joint_state_s = torch.zeros_like(local_state_s)
-        ## Populate root
-        joint_state_t[:, 0] = local_state_t[:, 0]
-        joint_state_r[:, 0] = local_state_r[:, 0]
-        joint_state_s[:, 0] = local_state_s[:, 0]
-        ## Fill in the rest
-        for joint_depth in range(1, max(self.lbs_fn_infos.joint_depths.long().tolist()) + 1):
-            joint_depth_mask = (self.lbs_fn_infos.joint_depths.long() == joint_depth).cuda()
-            joint_parents_idxs = self.lbs_fn_infos.joint_parents.long()[joint_depth_mask]
-            joint_state_t[:, joint_depth_mask] = (
-                (joint_state_r[:, joint_parents_idxs] @ local_state_t[:, joint_depth_mask, :, None]).squeeze(3) 
-                * joint_state_s[:, joint_parents_idxs] 
-                + joint_state_t[:, joint_parents_idxs])
-            joint_state_r[:, joint_depth_mask] = joint_state_r[:, joint_parents_idxs] @ local_state_r[:, joint_depth_mask]
-            joint_state_s[:, joint_depth_mask] = joint_state_s[:, joint_parents_idxs] * local_state_s[:, joint_depth_mask]
-        curr_joint_coords = joint_state_t
+        curr_skinned_verts, curr_joint_coords, curr_joint_rotations = self.lbs_fn.forwardFromJointParams(joint_params, template_verts)[:3]
         curr_skinned_verts = curr_skinned_verts / 100
         curr_joint_coords = curr_joint_coords / 100
 
@@ -307,8 +327,14 @@ class Proto(nn.Module):
             to_return = to_return + [curr_joint_coords]
         if return_model_params:
             to_return = to_return + [model_params]
-        if return_pcblend:
-            to_return = to_return + [pose_corrective_offsets]
+        if return_joint_rotations:
+            to_return = to_return + [curr_joint_rotations]
+        if return_joint_params:
+            to_return = to_return + [joint_params]
+
+        if slim_keypoints:
+            # vertices are nonsense
+            to_return[0] = None
 
         if len(to_return) == 1: return to_return[0]
         else: return tuple(to_return)
