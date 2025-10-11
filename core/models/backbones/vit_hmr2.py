@@ -931,6 +931,7 @@ class ViTTriplet(nn.Module):
         return xp
 
     def forward_features(self, x=None, lhand_x=None, rhand_x=None, extra_embed=None):
+        breakpoint()
         if lhand_x is None and rhand_x is None:
             return self.forward_features_single(x, extra_embed)
         

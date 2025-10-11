@@ -115,7 +115,8 @@ class ATLAS46(nn.Module):
             osp.join(self.model_data_dir, "lod3.fbx"), 
             osp.join(self.model_data_dir, 'compact_v6_0_withjaw_latest_25_06_05.model'),
         )
-        self.lbs_fn_infos = nn.ParameterDict({k: nn.Parameter(v.float(), requires_grad=False) for k, v in load_pickle(osp.join(self.model_data_dir, "lbs_fn_infos.pkl")).items()})
+        self.lbs_fn_infos = nn.ParameterDict({k: nn.Parameter(v.float(), 
+                                            requires_grad=False) for k, v in load_pickle(osp.join(self.model_data_dir, "lbs_fn_infos.pkl")).items()})
 
         # Load Hand PCA
         self._load_hand_prior()

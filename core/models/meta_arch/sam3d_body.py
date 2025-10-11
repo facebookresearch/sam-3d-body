@@ -34,34 +34,6 @@ PROMPT_KEYPOINTS = {  # keypoint_idx: prompt_idx
 KEY_BODY = [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 41, 62]  # key body joints for prompting
 # fmt: on
 
-
-def load_sam3d_body(checkpoint_path, proto_path, estimate_cam_int=True):
-    # Check the current directory, and if not present check the parent dir.
-    model_cfg = os.path.join(os.path.dirname(checkpoint_path), "model_config.yaml")
-    if not os.path.exists(model_cfg):
-        # Looks at parent dir
-        model_cfg = os.path.join(
-            os.path.dirname(os.path.dirname(checkpoint_path)), "model_config.yaml"
-        )
-
-    model_cfg = get_config(model_cfg)
-
-    # Disable face for inference
-    model_cfg.defrost()
-    model_cfg.MODEL.ATLAS_HEAD.ZERO_FACE = True
-    model_cfg.MODEL.ATLAS_HEAD.ATLAS_MODEL_PATH = proto_path
-    model_cfg.freeze()
-
-    model = SAM3DBody(model_cfg, estimate_cam_int=estimate_cam_int)
-    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
-    if "state_dict" in checkpoint:
-        state_dict = checkpoint["state_dict"]
-    else:
-        state_dict = checkpoint
-    load_state_dict(model, state_dict, strict=False)
-    return model, model_cfg
-
-
 class SAM3DBody(BaseModel):
 
     pelvis_idx = [9, 10]  # left_hip, right_hip
@@ -174,10 +146,16 @@ class SAM3DBody(BaseModel):
 
         if self.cfg.MODEL.get("RAY_CONDITION_TYPE", None) is not None:
             if self.cfg.MODEL.BACKBONE.TYPE in [
-                "vit_b",
-                "vit_l",
-                "vit_hmr",
-                "vit_hmr_512_384",
+                "vit_b",                 
+                "vit_l",                 
+                "vit_hmr",                 
+                "hmr2",                
+                "vit",                 
+                "vit_hmr_256",                 
+                "vit_hmr_512_384",                 
+                "vit_hmr_triplet",                 
+                "vit_hmr_triplet_512_384",                 
+                "vit_l_triplet_512_384",
             ]:
                 self.ray_cond_emb = nn.Conv2d(
                     2,
