@@ -219,7 +219,6 @@ class ATLAS46Head(nn.Module):
                 shape_params=pred_shape,
                 expr_params=pred_face_for_forward,
                 do_pcblend=do_pcblend,
-                return_joint_rotations=True,
             )[1]
             self.atlas.lbs_fn.fk_only = False
 
@@ -261,11 +260,7 @@ class ATLAS46Head(nn.Module):
             expr_params=pred_face_for_forward,
             do_pcblend=do_pcblend,
             return_keypoints=(self.mesh_type in ["lod3", "smpl"]),
-            slim_keypoints=slim_keypoints
-            and self.mesh_type == "lod3",  # only during training
             return_joint_coords=self.mesh_type == "lod3",
-            return_joint_rotations=self.mesh_type == "lod3",
-            return_joint_params=self.mesh_type == "lod3",
         )
 
         # Some existing code to get joints and fix camera system
