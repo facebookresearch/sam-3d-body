@@ -1,5 +1,5 @@
 import os
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, Any
 
 import numpy as np
 import torch
@@ -148,7 +148,6 @@ class SAM3DBodyTriplet(BaseModel):
         )
         # self.hand_backbone = create_backbone("vit_hand", self.cfg, pretrained=False)  # Always vit_b for hand
 
-        num_heads = 8
         if self.cfg.MODEL.BACKBONE.get("PRETRAINED_WEIGHTS", None):
             # Overwrite the default pretrained weights
 
@@ -181,17 +180,6 @@ class SAM3DBodyTriplet(BaseModel):
                 "vit_l_triplet_512_384",
             ]:  # FIXME
                 load_state_dict(self.backbone, state_dict, strict=False)
-
-            elif self.cfg.MODEL.BACKBONE.TYPE in [
-                "dinov3_vit7b",
-                "dinov3_vith16plus",
-                "dinov3_vits16",
-                "dinov3_vits16plus",
-                "dinov3_vitb16",
-                "dinov3_vitl16",
-            ]:
-                load_state_dict(self.backbone.encoder, state_dict, strict=False)
-
             else:
                 load_state_dict(self, state_dict, strict=False)
 
@@ -383,11 +371,6 @@ class SAM3DBodyTriplet(BaseModel):
                 )
 
             if self.cfg.MODEL.DECODER.get("SEPARATE_AUX_TOKENS_2D", False):
-                # Sorry, we have to be *very* careful here.
-                # This means we're going to have a _separate_ set of auxiliary tokens.
-                # If this is the case, DO_KEYPOINT_TOKENS_2D_KPS_PRED *must* be true,
-                # and "DO_KEYPOINT_TOKENS_2D_KPS_PRED" is applied to these separate aux tokens
-                # instead of the above atlas-tied-keypoint tokens.
                 self.keypoint_embedding_aux = nn.Embedding(
                     len(self.keypoint_embedding_idxs), self.cfg.MODEL.DECODER.DIM
                 )
@@ -1420,15 +1403,6 @@ class SAM3DBodyTriplet(BaseModel):
                             self.cfg.MODEL.DECODER.DO_INTERM_SUP_WEIGHTS
                         )
 
-                        for interm_idx in range(len(output["atlas_interm"])):
-                            output["atlas_interm"][interm_idx][k].register_hook(
-                                functools.partial(
-                                    interm_grad_hook,
-                                    weight=self.cfg.MODEL.DECODER.DO_INTERM_SUP_WEIGHTS[
-                                        interm_idx
-                                    ],
-                                )
-                            )
                     if not self.cfg.LOSS_WEIGHTS.get('HAND_LOSS_KINEMATIC_ANNEALING', False) or k not in ["joint_params"]:
                         # Need to preserve original tensors used in forward for annealing hook.
                         atlas_output_inflate[k] = torch.cat(
@@ -1537,10 +1511,7 @@ class SAM3DBodyTriplet(BaseModel):
             ] + ([pose_output["pred_global_wrist_raw"]] if pose_output.get('pred_global_wrist_raw', None) is not None else []),
             dim=1,
         ).unsqueeze(dim=1)
-        if hasattr(self, "init_camera") or self.cfg.MODEL.PERSON_HEAD.POSE_TYPE in [
-            "atlas",
-            "atlas46",
-        ]:
+        if hasattr(self, "init_camera"):
             prev_estimate = torch.cat(
                 [prev_estimate, pose_output["pred_cam"].detach().unsqueeze(1)], dim=-1
             )
@@ -1605,27 +1576,6 @@ class SAM3DBodyTriplet(BaseModel):
             ),
             use_intrin_center=self.cfg.MODEL.DECODER.get("USE_INTRIN_CENTER", False),
         )
-
-        if pose_output.get("pred_vertices", None) is not None:
-            cam_out_vertices = head_camera.perspective_projection(
-                pose_output["pred_vertices"],
-                pred_cam,
-                self._flatten_person(batch["bbox_center"]),
-                self._flatten_person(batch["bbox_scale"])[:, 0],
-                self._flatten_person(batch["ori_img_size"]),
-                self._flatten_person(
-                    batch["cam_int"]
-                    .unsqueeze(1)
-                    .expand(-1, batch["img"].shape[1], -1, -1)
-                    .contiguous()
-                ),
-                use_intrin_center=self.cfg.MODEL.DECODER.get(
-                    "USE_INTRIN_CENTER", False
-                ),
-            )
-            pose_output["pred_keypoints_2d_verts"] = cam_out_vertices[
-                "pred_keypoints_2d"
-            ]
 
         pose_output.update(cam_out)
 
@@ -1734,10 +1684,6 @@ class SAM3DBodyTriplet(BaseModel):
             crop_hand=crop_hand,
         )
 
-        # we don't crop hand images
-        # lhand_x = self.data_preprocess(self._flatten_person(batch["lhand_img"]))
-        # rhand_x = self.data_preprocess(self._flatten_person(batch["rhand_img"]))
-
         # Optionally get ray conditioining
         if self.cfg.MODEL.get("RAY_CONDITION_TYPE", None) is not None:
             ray_cond = self.get_ray_condition(
@@ -1798,29 +1744,6 @@ class SAM3DBodyTriplet(BaseModel):
         }
 
         image_embeddings = fused_features
-        if self.cfg.MODEL.BACKBONE.TYPE in [
-            "pe_core_b",
-            "pe_core_l",
-            "pe_spatial_l",
-            "pe_spatial_b",
-            "pe_spatial_s",
-            "pe_spatial_t",
-        ]:
-            image_embeddings = image_embeddings[:, 1:, :]  # remove cls token
-
-        if self.cfg.MODEL.BACKBONE.TYPE in [
-            "pe_core_b",
-            "pe_core_l",
-            "pe_core_g",
-            "pe_spatial_g",
-            "pe_spatial_l",
-            "pe_spatial_b",
-            "pe_spatial_s",
-            "pe_spatial_t",
-        ]:
-            B, N, C = image_embeddings.shape
-            H = W = int(N**0.5)  # assumes square layout, here 18
-            image_embeddings = image_embeddings.transpose(1, 2).reshape(B, C, H, W)
 
         if isinstance(image_embeddings, tuple):
             image_embeddings = image_embeddings[-1]
@@ -1956,8 +1879,6 @@ class SAM3DBodyTriplet(BaseModel):
             wholebody_max = pose_output["atlas"]["pred_keypoints_2d"].amax(dim=1).cpu().long().numpy()
             wholebody_min[:, 0] = np.clip(wholebody_min[:, 0], a_min=0, a_max=full_imgs_hw[:, 1])
             wholebody_min[:, 1] = np.clip(wholebody_min[:, 1], a_min=0, a_max=full_imgs_hw[:, 0])
-
-            body_center = (wholebody_min + wholebody_max) / 2
             body_scale = (wholebody_max - wholebody_min) * scale_factor
             hand_scale = body_scale * hand_body_ratio
 
