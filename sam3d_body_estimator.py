@@ -33,9 +33,8 @@ except:
     print("Conda env. does not have MoGe installed!")
 
 # Load the model from local.
-def get_moge_model():
+def get_moge_model(ckpt_path):
     device = torch.device("cuda")
-    ckpt_path = "/checkpoint/3po/nugrinovic/data/external/moge/Ruicheng/moge-2-vitl-normal/model.pt"
     moge_model = MoGeModel.from_pretrained(ckpt_path).to(device)
     return moge_model
 
@@ -44,50 +43,49 @@ class NoCollate:
         self.data = data
 
 def get_cam_intrinsics(model, batch):
-    model_name = model.__class__.__name__
-    if model_name == "CameraHMR":
-        batch_size = batch["img_full"].shape[0]
+    # We expect the image to be RGB already
+    input_image = batch['img_ori'][0].data
+    H, W, _ = input_image.shape
 
-        # Initialize camera intrinsics
-        img_h, img_w = batch["ori_img_size"][:, 0, 1], batch["ori_img_size"][:, 0, 0]
-        cam_intrinsics = torch.zeros((batch_size, 3, 3)).to(batch["img"])
-        cam_intrinsics[:, 0, 2] = img_w / 2
-        cam_intrinsics[:, 1, 2] = img_h / 2
-        cam_intrinsics[:, 2, 2] = 1
-
-        # Get Camera intrinsics using HumanFoV Model
-        img_full_resized = model.normalize_img(batch["img_full"])
-        model.cam_model.eval()
-        with torch.no_grad():
-            estimated_fov, _ = model.cam_model(img_full_resized)
-        vfov = estimated_fov[:, 1]
-        fl_h = img_h / (2 * torch.tan(vfov / 2))
-        cam_intrinsics[:, 0, 0] = fl_h
-        cam_intrinsics[:, 1, 1] = fl_h
-
-    elif model_name == "MoGeModel":
-        # NOTE: for now only to be used with demo!
-        # We expect the image to be RGB already
-        input_image = batch['img_ori'][0].data
-        H, W, _ = input_image.shape
-
-        input_image = torch.tensor(input_image / 255, dtype=torch.float32,
-                                   device=batch["img"].device).permute(2, 0, 1)
-        # Infer w/ MoGe2
-        model.eval()
-        moge_data = model.infer(input_image)
-        # get intrinsics
-        intrinsics = denormalize_f(moge_data['intrinsics'].cpu().numpy(), H, W)
-        v_focal = intrinsics[1, 1]
-        # override hfov with v_focal ?
-        intrinsics[0, 0] = v_focal
-        intrinsics = (intrinsics).to(batch["img"])
-        # add batch dim
-        cam_intrinsics = intrinsics[None]
-    else:
-        raise NotImplementedError
-
+    input_image = torch.tensor(input_image / 255, dtype=torch.float32,
+                                device=batch["img"].device).permute(2, 0, 1)
+    # Infer w/ MoGe2
+    model.eval()
+    moge_data = model.infer(input_image)
+    # get intrinsics
+    intrinsics = denormalize_f(moge_data['intrinsics'].cpu().numpy(), H, W)
+    v_focal = intrinsics[1, 1]
+    # override hfov with v_focal
+    intrinsics[0, 0] = v_focal
+    intrinsics = (intrinsics).to(batch["img"])
+    # add batch dim
+    cam_intrinsics = intrinsics[None]
     return cam_intrinsics
+
+def denormalize_f(norm_K, height, width):
+    # Extract cx and cy from the normalized K matrix
+    cx_norm = norm_K[0][2]  # c_x is at K[0][2]
+    cy_norm = norm_K[1][2]  # c_y is at K[1][2]
+
+    fx_norm = norm_K[0][0]  # Normalized fx
+    fy_norm = norm_K[1][1]  # Normalized fy
+    # s_norm = norm_K[0][1]   # Skew (usually 0)
+
+    # Scale to absolute values
+    fx_abs = fx_norm * width
+    fy_abs = fy_norm * height
+    cx_abs = cx_norm * width
+    cy_abs = cy_norm * height
+    # s_abs = s_norm * width
+    s_abs = 0
+
+    # Construct absolute K matrix
+    abs_K = torch.tensor([
+        [fx_abs, s_abs, cx_abs],
+        [0.0, fy_abs, cy_abs],
+        [0.0, 0.0, 1.0]
+    ])
+    return abs_K
 
 
 class SAM3DBodyEstimator:
@@ -103,7 +101,7 @@ class SAM3DBodyEstimator:
         scale_factor = None,
         just_left_hand = False,
         use_face = False,
-        fov_estimator = "camerahmr",
+        moge_path: str = "",
     ):
         self.device = (torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'))
         self.use_mask = use_mask
@@ -130,14 +128,11 @@ class SAM3DBodyEstimator:
         self.model.eval()
 
         # is not using moge env. default to camerahmr
-        self.fov_estimator = fov_estimator if has_moge_env else "camerahmr"
-        if self.fov_estimator == "moge":
-            self.moge_model = get_moge_model()
-        elif self.fov_estimator == "camerahmr":
-            # self.camerahmr = CameraHMR() # TODO: implement
-            self.camerahmr = None 
+        if moge_path and has_moge_env:
+            self.fov_estimator = get_moge_model(moge_path)
         else:
-            assert False, "not supported fov estimator {}".format(self.fov_estimator)
+            self.fov_estimator = None
+            print("No FOV estimator... Using the default FOV!")
 
     def init_detector(self, detector_path, threshold):
         DETECTRON_CFG = os.path.join(detector_path, "cascade_mask_rcnn_vitdet_h_75ep.py")
@@ -381,21 +376,17 @@ class SAM3DBodyEstimator:
                 # batch["cam_int"] = get_cam_intrinsics(self.camerahmr, batch).to(
                 #     batch["img"]
                 # )
+
                 pose_output, full_output = self.model.forward_step(batch)
         else:
             # triplet
             assert self.model.use_twostage_for_hands
             self.model._initialize_batch(batch)
             with torch.no_grad():
-                if self.fov_estimator == "moge":
-                    assert hasattr(self, "moge_model"), "MoGe model not found!"
-                    fov_model = self.moge_model
-                else:
-                    fov_model = self.camerahmr
-
-                # batch["cam_int"] = get_cam_intrinsics(fov_model, batch).to(
-                #     batch["img"]
-                # )
+                if self.fov_estimator is not None:
+                    batch["cam_int"] = get_cam_intrinsics(self.fov_estimator, batch).to(
+                        batch["img"]
+                    )
 
                 pose_output_ab, full_output_ab = self.model.forward_step(batch)
                 if self.just_left_hand:

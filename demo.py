@@ -82,6 +82,7 @@ def visualize_sample(img_cv2, outputs, faces):
 DETECTOR_FOLDER = "/large_experiments/3po/model/cascade_mask_rcnn_vitdet"
 # PROTO_PATH = "/large_experiments/3po/model/atlas_250825"
 PROTO_PATH = "/large_experiments/3po/model/atlas_250926_dev2/assets"
+MOGE_PATH = "/private/home/jiawliu/cores/Human-Object/postprocess/MoGe/checkpoints/model.pt"
 
 def main(args):
     if args.output_folder == "":
@@ -96,6 +97,7 @@ def main(args):
         checkpoint_path=args.checkpoint_path,
         proto_path=PROTO_PATH,
         detector_path=DETECTOR_FOLDER,
+        moge_path=MOGE_PATH,
     )
 
     image_extensions = ['*.jpg', '*.jpeg', '*.png', '*.gif', '*.bmp', '*.tiff', '*.webp']
