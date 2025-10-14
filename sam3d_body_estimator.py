@@ -354,8 +354,7 @@ class SAM3DBodyEstimator:
         batch["mask"] = batch["mask"].unsqueeze(2)
         batch["person_valid"] = torch.ones((1, max_num_person))
 
-        # FIXME: Use default camera intrinsics for now
-        # TODO:[Jinkun] use moge or camerahmr
+        # Set default camera intrinsics
         batch["cam_int"] = torch.tensor(
             [[[(height ** 2 + width ** 2) ** 0.5, 0, width / 2.],
             [0, (height ** 2 + width ** 2) ** 0.5, height / 2.],

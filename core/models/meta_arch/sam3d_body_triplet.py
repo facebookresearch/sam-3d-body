@@ -83,14 +83,6 @@ class PositionEmbeddingRandom(nn.Module):
     
 
 class SAM3DBodyTriplet(BaseModel):
-    """
-    Two branch design:
-    Full-image encoder for camera-related prediction
-    Crop-image encoder for pose estimation
-
-    V1: support CLIFF-style condition and (weak)-perspective prediction
-        (s, tx, ty)
-    """
 
     pelvis_idx = [9, 10]  # left_hip, right_hip
 
@@ -102,86 +94,10 @@ class SAM3DBodyTriplet(BaseModel):
             "image_std", torch.tensor(self.cfg.MODEL.IMAGE_STD).view(-1, 1, 1), False
         )
 
-        # Create the full-image encoder (frozen)
-        if self.cfg.MODEL.FULL_ENCODER.ENABLE:
-            self.full_encoder = create_backbone(self.cfg.MODEL.FULL_ENCODER.TYPE)
-            for param in self.full_encoder.parameters():
-                param.requires_grad = False
-            self.register_buffer(
-                "full_image_mean",
-                torch.tensor(self.cfg.MODEL.FULL_ENCODER.IMAGE_MEAN).view(-1, 1, 1),
-                False,
-            )
-            self.register_buffer(
-                "full_image_std",
-                torch.tensor(self.cfg.MODEL.FULL_ENCODER.IMAGE_STD).view(-1, 1, 1),
-                False,
-            )
-
-            # Create the full-image decoder
-            if self.cfg.MODEL.FULL_DECODER.ENABLE:
-                if self.cfg.MODEL.FULL_HEAD.CAMERA_ENABLE:
-                    self.full_camera = build_head(
-                        self.cfg, self.cfg.MODEL.FULL_HEAD.CAMERA_TYPE
-                    )
-                    self.full_init_camera = nn.Embedding(1, self.full_camera.ncam)
-                    nn.init.zeros_(self.full_init_camera.weight)
-                if self.cfg.MODEL.FULL_HEAD.FOCAL_LENGTH_ENABLE:
-                    raise NotImplementedError
-
-                init_dim = (
-                    self.full_encoder.embed_dims
-                    if not self.cfg.MODEL.FULL_HEAD.CAMERA_ENABLE
-                    else self.full_encoder.embed_dims + self.full_camera.ncam
-                )
-                self.init_to_token_full = nn.Linear(
-                    init_dim, self.cfg.MODEL.FULL_DECODER.DIM
-                )
-                self.full_decoder = build_decoder(
-                    self.cfg.MODEL.FULL_DECODER,
-                    context_dim=self.full_encoder.embed_dims,
-                )
-
         # Create backbone feature extractor for human crops
         self.backbone = create_backbone(
-            self.cfg.MODEL.BACKBONE.TYPE, self.cfg, pretrained=True
+            self.cfg.MODEL.BACKBONE.TYPE, self.cfg, pretrained=False
         )
-        # self.hand_backbone = create_backbone("vit_hand", self.cfg, pretrained=False)  # Always vit_b for hand
-
-        if self.cfg.MODEL.BACKBONE.get("PRETRAINED_WEIGHTS", None):
-            # Overwrite the default pretrained weights
-
-            weight_path = self.cfg.MODEL.BACKBONE.PRETRAINED_WEIGHTS
-            if not os.path.exists(weight_path):
-                weight_path = "/large_experiments/3po/model/hmr2/vitpose_backbone.pth"  # fallout on FC
-
-            logger.info(f"Loading backbone weights from {weight_path}")
-            checkpoint = torch.load(
-                weight_path,
-                map_location="cpu",
-                weights_only=True,
-            )
-            if "state_dict" in checkpoint:
-                state_dict = checkpoint["state_dict"]
-            elif "model_state_dict" in checkpoint:
-                state_dict = checkpoint["model_state_dict"]
-            else:
-                state_dict = checkpoint
-
-            if self.cfg.MODEL.BACKBONE.TYPE in [
-                "vit_b",
-                "vit_l",
-                "vit_hmr",
-                "vit_hmr_triplet",
-                "vit",
-                "vit_hmr_256",
-                "vit_hmr_512_384",
-                "vit_hmr_triplet_512_384",
-                "vit_l_triplet_512_384",
-            ]:  # FIXME
-                load_state_dict(self.backbone, state_dict, strict=False)
-            else:
-                load_state_dict(self, state_dict, strict=False)
 
         # Create header for pose estimation output
         self.head_pose = build_head(self.cfg, self.cfg.MODEL.PERSON_HEAD.POSE_TYPE)
@@ -209,18 +125,6 @@ class SAM3DBodyTriplet(BaseModel):
             nn.init.zeros_(self.init_camera.weight)
 
         self.camera_type = "perspective"
-        if (
-            self.cfg.MODEL.PERSON_HEAD.POSE_TYPE == "atlas_old"  # old version
-            or (
-                self.cfg.MODEL.PERSON_HEAD.CAMERA_ENABLE
-                and self.cfg.MODEL.PERSON_HEAD.CAMERA_TYPE == "weak_perspective"
-            )
-            or (
-                self.cfg.MODEL.FULL_HEAD.CAMERA_ENABLE
-                and self.cfg.MODEL.FULL_HEAD.CAMERA_TYPE == "weak_perspective"
-            )
-        ):
-            self.camera_type = "weak_perspective"
 
         # Support conditioned information for decoder
         if self.cfg.MODEL.DECODER.CONDITION_TYPE == "cliff":
@@ -285,38 +189,16 @@ class SAM3DBodyTriplet(BaseModel):
             self.cfg.MODEL.DECODER, context_dim=self.backbone.embed_dims
         )
 
-        # TODO:[Jinkun] whether we keep this for inference?
         # Manually convert the torso of the model to fp16.
-        # if self.cfg.TRAIN.USE_FP16:
-        #     self.convert_to_fp16()
-        #     # self.convert_backbone_to_fp16(self.hand_backbone)
-        #     if self.cfg.MODEL.get('TRIPLET_FUSION_METHOD', 'v0') =="v0":
-        #         for layer in self.attention_fusion.modules():
-        #             layer.half()
-        #     if self.cfg.TRAIN.get("FP16_TYPE", "float16") == "float16":
-        #         self.backbone_dtype = torch.float16
-        #     else:
-        #         self.backbone_dtype = torch.bfloat16
-        # else:
-        #     self.convert_to_fp32()
-        #     # self.convert_backbone_to_fp32(self.hand_backbone)
-        #     if self.cfg.MODEL.get('TRIPLET_FUSION_METHOD', 'v0') =="v0":
-        #         for layer in self.attention_fusion.modules():
-        #             layer.float()
-        #     self.backbone_dtype = torch.float32
-
-        # self.convert_to_fp32()
-        # # self.convert_backbone_to_fp32(self.hand_backbone)
-        # if self.cfg.MODEL.get('TRIPLET_FUSION_METHOD', 'v0') =="v0":
-        #     for layer in self.attention_fusion.modules():
-        #         layer.float()
-        self.backbone_dtype = torch.float32
-
-        # Disable automatic optimization since we use our own lr_scheduler
-        self.automatic_optimization = False
-
-        self.estimate_cam_int = estimate_cam_int
-
+        if self.cfg.TRAIN.USE_FP16:
+            self.convert_to_fp16()
+            if self.cfg.TRAIN.get("FP16_TYPE", "float16") == "float16":
+                self.backbone_dtype = torch.float16
+            else:
+                self.backbone_dtype = torch.bfloat16
+        else:
+            self.backbone_dtype = torch.float32
+            
         if self.cfg.MODEL.get("RAY_CONDITION_TYPE", None) is not None:
             if self.cfg.MODEL.BACKBONE.TYPE in [
                 "vit_b",
@@ -344,7 +226,6 @@ class SAM3DBodyTriplet(BaseModel):
             torch.nn.init.zeros_(self.ray_cond_emb.bias)
 
         if self.cfg.MODEL.DECODER.get("DO_KEYPOINT_TOKENS", False):
-            # TODO: Tie with prompt encoder?
             if not self.cfg.MODEL.DECODER.get("DO_KEYPOINT_TOKENS_BODY_ONLY", False):
                 # Do all KPS
                 self.keypoint_embedding_idxs = list(range(70))
@@ -370,18 +251,9 @@ class SAM3DBodyTriplet(BaseModel):
                     add_identity=False,
                 )
 
-            if self.cfg.MODEL.DECODER.get("SEPARATE_AUX_TOKENS_2D", False):
-                self.keypoint_embedding_aux = nn.Embedding(
-                    len(self.keypoint_embedding_idxs), self.cfg.MODEL.DECODER.DIM
-                )
-                assert self.cfg.MODEL.DECODER.get(
-                    "DO_KEYPOINT_TOKENS_2D_KPS_PRED", False
-                )
-
         if self.cfg.MODEL.DECODER.get("KEYPOINT_TOKEN_UPDATE", None) in [
             "v1",
             "v2",
-            "v3",
         ]:
             if not self.cfg.MODEL.DECODER.get(
                 "KEYPOINT_TOKEN_UPDATE_COORD_EMB_USE_MLP", False
@@ -391,7 +263,6 @@ class SAM3DBodyTriplet(BaseModel):
                     self.backbone.embed_dims, self.cfg.MODEL.DECODER.DIM
                 )
             else:
-                # TODO (jinhyun1): Shared for now
                 self.keypoint_posemb_linear = FFN(
                     embed_dims=2,
                     feedforward_channels=self.cfg.MODEL.DECODER.DIM,
@@ -403,31 +274,10 @@ class SAM3DBodyTriplet(BaseModel):
                 self.keypoint_feat_linear = nn.Linear(
                     self.backbone.embed_dims, self.cfg.MODEL.DECODER.DIM
                 )
-            elif self.cfg.MODEL.DECODER.KEYPOINT_TOKEN_UPDATE == "v3":
-                from ..modules import MSDeformAttn
-
-                # Different params for each layer
-                # TODO (jinhyun1): Tie? Norm? This goes 1280 -> 1024 -> 1024.
-                # Maybe it should be 1280 -> 256 -> 1024?
-                # How many heads? Default is 8, because 256/8 = 32, so should it be more heads?
-                self.keypoint_feat_sampling_layers = nn.ModuleList(
-                    [
-                        MSDeformAttn(
-                            d_model=self.cfg.MODEL.DECODER.DIM,
-                            n_levels=1,
-                            n_heads=16,
-                            n_points=4,
-                            input_dim=self.backbone.embed_dims,
-                        )
-                        for _ in range(len(self.decoder.layers) - 1)
-                    ]
-                )
         else:
             assert self.cfg.MODEL.DECODER.get("KEYPOINT_TOKEN_UPDATE", None) is None
 
         if self.cfg.MODEL.DECODER.get("DO_KEYPOINT3D_TOKENS", False):
-            # TODO: Tie with prompt encoder? Tie with 2D? There's nothing linking 2D and 3D together - maybe same embedding, then 2D vs 3D repated embedding?
-            # TODO: Maybe these should also predict 3D heatmaps
             if not self.cfg.MODEL.DECODER.get("DO_KEYPOINT3D_TOKENS_BODY_ONLY", False):
                 # Do all KPS
                 self.keypoint3d_embedding_idxs = list(range(70))
@@ -453,94 +303,12 @@ class SAM3DBodyTriplet(BaseModel):
                     add_identity=False,
                 )
 
-            if self.cfg.MODEL.DECODER.get("SEPARATE_AUX_TOKENS_3D", False):
-                # Sorry, we have to be *very* careful here.
-                # This means we're going to have a _separate_ set of auxiliary tokens.
-                # If this is the case, DO_KEYPOINT_TOKENS_3D_KPS_PRED *must* be true,
-                # and "DO_KEYPOINT_TOKENS_3D_KPS_PRED" is applied to these separate aux tokens
-                # instead of the above atlas-tied-keypoint tokens.
-                self.keypoint3d_embedding_aux = nn.Embedding(
-                    len(self.keypoint3d_embedding_idxs), self.cfg.MODEL.DECODER.DIM
-                )
-                assert self.cfg.MODEL.DECODER.get(
-                    "DO_KEYPOINT_TOKENS_3D_KPS_PRED", False
-                )
-
         if self.cfg.MODEL.DECODER.get("KEYPOINT3D_TOKEN_UPDATE", None) in ["v1"]:
-            # v1 is to use an MLP embedding, root normalized (TODO: or pelvis normalized?)
-            # TODO (jinhyun1): Shared for now
+            # v1 is to use an MLP embedding, root normalized
             self.keypoint3d_posemb_linear = FFN(
                 embed_dims=3,
                 feedforward_channels=self.cfg.MODEL.DECODER.DIM,
                 output_dims=self.cfg.MODEL.DECODER.DIM,
-                num_fcs=2,
-                add_identity=False,
-            )
-
-        if self.cfg.MODEL.DECODER.get("LEARNABLE_KPS2D_UNCERTAINTY", None) in [
-            "v1",
-            "v3",
-        ]:
-            # v1 is to use a learnable uncertainty for each keypoint.
-            self.keypoint2d_loss_logsigma = nn.Embedding(1, 70)
-            torch.nn.init.zeros_(self.keypoint2d_loss_logsigma.weight)
-
-            if self.cfg.MODEL.DECODER.get("LEARNABLE_KPS2D_UNCERTAINTY", None) in [
-                "v3"
-            ]:
-                # This takes the keypoint2d tokens. Note that this does not handle SMPL24 or potentially body tokens.
-                assert self.cfg.MODEL.DECODER.get("DO_KEYPOINT_TOKENS", False)
-                self.keypoint2d_loss_logsigma_layer = FFN(
-                    embed_dims=self.cfg.MODEL.DECODER.DIM,
-                    feedforward_channels=self.cfg.MODEL.DECODER.DIM,
-                    output_dims=1,
-                    num_fcs=2,
-                    add_identity=False,
-                )
-        elif self.cfg.MODEL.DECODER.get("LEARNABLE_KPS2D_UNCERTAINTY", None) in ["v2"]:
-            self.keypoint2d_loss_logsigma = FFN(
-                embed_dims=self.cfg.MODEL.DECODER.DIM,
-                feedforward_channels=self.cfg.MODEL.DECODER.DIM,
-                output_dims=70,
-                num_fcs=2,
-                add_identity=False,
-            )
-
-        if self.cfg.MODEL.DECODER.get("LEARNABLE_KPS3D_UNCERTAINTY", None) in [
-            "v1",
-            "v3",
-        ]:
-            # v1 is to use a learnable uncertainty for each keypoint.
-            self.keypoint3d_loss_logsigma = nn.Embedding(1, 70)
-            torch.nn.init.zeros_(self.keypoint3d_loss_logsigma.weight)
-            if self.cfg.LOSS_WEIGHTS.get("SMPL_24_KEYPOINTS_3D", 0) != 0:
-                self.keypoint3d_smpl24_loss_logsigma = nn.Embedding(1, 24)
-                torch.nn.init.zeros_(self.keypoint3d_smpl24_loss_logsigma.weight)
-
-            if self.cfg.MODEL.DECODER.get("LEARNABLE_KPS3D_UNCERTAINTY", None) in [
-                "v3"
-            ]:
-                # This takes the keypoint3d tokens. Note that this does not predict SMPL24 or potentially body tokens.
-                # So, we'll handle those separately with global learnable
-                assert self.cfg.MODEL.DECODER.get("DO_KEYPOINT3D_TOKENS", False)
-                self.keypoint3d_loss_logsigma_layer = FFN(
-                    embed_dims=self.cfg.MODEL.DECODER.DIM,
-                    feedforward_channels=self.cfg.MODEL.DECODER.DIM,
-                    output_dims=1,
-                    num_fcs=2,
-                    add_identity=False,
-                )
-        elif self.cfg.MODEL.DECODER.get("LEARNABLE_KPS3D_UNCERTAINTY", None) in ["v2"]:
-            # This directly processes pose token.
-            self.keypoint3d_loss_logsigma = FFN(
-                embed_dims=self.cfg.MODEL.DECODER.DIM,
-                feedforward_channels=self.cfg.MODEL.DECODER.DIM,
-                output_dims=70
-                + (
-                    24
-                    if (self.cfg.LOSS_WEIGHTS.get("SMPL_24_KEYPOINTS_3D", 0) != 0)
-                    else 0
-                ),
                 num_fcs=2,
                 add_identity=False,
             )
@@ -564,7 +332,6 @@ class SAM3DBodyTriplet(BaseModel):
                 .expand(-1, num_person, -1, -1)
                 .contiguous()
             )[:, 0, 0]
-            # condition_info = torch.cat([cx - img_w / 2.0, cy - img_h / 2.0, b], dim=-1
             if not self.cfg.MODEL.DECODER.get("USE_INTRIN_CENTER", False):
                 condition_info = torch.cat(
                     [cx - img_w / 2.0, cy - img_h / 2.0, b], dim=-1
@@ -641,7 +408,7 @@ class SAM3DBodyTriplet(BaseModel):
             batch_size, 1, -1
         )  # B x 1 x 1024 (linear layered)
         num_pose_token = token_embeddings.shape[1]
-        assert num_pose_token == 1  # TODO: extend to multiple pose token (multi-hmr)
+        assert num_pose_token == 1
 
         image_augment, token_augment, token_mask = None, None, None
         if hasattr(self, "prompt_encoder") and keypoints is not None:
@@ -694,7 +461,7 @@ class SAM3DBodyTriplet(BaseModel):
                     image_embeddings.shape[-2:]
                 )  # (1, C, H, W)
                 if self.cfg.MODEL.get('TRIPLET_FUSION_METHOD', 'v0') == "v1":
-                    # TODO: Shape here is hard-coded
+                    # Shape here is hard-coded
                     hand_augment = torch.cat([
                         self.lhand_pe_layer((image_embeddings.shape[-2], image_embeddings.shape[-1])).unsqueeze(0).flatten(2, 3),
                         self.rhand_pe_layer((image_embeddings.shape[-2], image_embeddings.shape[-1])).unsqueeze(0).flatten(2, 3),
@@ -783,52 +550,6 @@ class SAM3DBodyTriplet(BaseModel):
                     dim=1,
                 )  # B x 3 + 70 + 70 x 1024
 
-            if self.cfg.MODEL.DECODER.get("SEPARATE_AUX_TOKENS_2D", False):
-                # Put in a token for each keypoint
-                kps_emb_aux_start_idx = token_embeddings.shape[1]
-                token_embeddings = torch.cat(
-                    [
-                        token_embeddings,
-                        self.keypoint_embedding_aux.weight[None, :, :].repeat(
-                            batch_size, 1, 1
-                        ),
-                    ],
-                    dim=1,
-                )
-                # No positional embeddings
-                token_augment = torch.cat(
-                    [
-                        token_augment,
-                        torch.zeros_like(
-                            token_embeddings[:, token_augment.shape[1] :, :]
-                        ),
-                    ],
-                    dim=1,
-                )
-
-            if self.cfg.MODEL.DECODER.get("SEPARATE_AUX_TOKENS_3D", False):
-                # Put in a token for each keypoint
-                kps3d_emb_aux_start_idx = token_embeddings.shape[1]
-                token_embeddings = torch.cat(
-                    [
-                        token_embeddings,
-                        self.keypoint3d_embedding_aux.weight[None, :, :].repeat(
-                            batch_size, 1, 1
-                        ),
-                    ],
-                    dim=1,
-                )
-                # No positional embeddings
-                token_augment = torch.cat(
-                    [
-                        token_augment,
-                        torch.zeros_like(
-                            token_embeddings[:, token_augment.shape[1] :, :]
-                        ),
-                    ],
-                    dim=1,
-                )
-
         if not self.cfg.MODEL.DECODER.get("DO_INTERM_PREDS", False):
             tokens = self.decoder(
                 token_embeddings,
@@ -852,9 +573,6 @@ class SAM3DBodyTriplet(BaseModel):
             pose_output = self.camera_project(pose_output, batch, full_output)
         else:
             # We're doing intermediate model predictions
-            # Yes, there's an easier way to do this, which is just to get the output features
-            # and decode them here, but we may want to use predictions inside the decoder, so..
-
             def token_to_pose_output_fn(tokens, prev_pose_output, layer_idx):
                 # Get the pose token
                 pose_token = tokens[:, 0]
@@ -865,7 +583,6 @@ class SAM3DBodyTriplet(BaseModel):
                     self.cfg.MODEL.DECODER.get("DO_INTERM_RESIDUAL_PRED", False)
                     and prev_pose_output is not None
                 ):
-                    # TODO (jinhyun1): Detach or not detach? Also, probably shouldn't .clone(), but I'm terrified of in-place
                     prev_pose = torch.cat(
                         [
                             prev_pose_output["pred_pose_raw"],
@@ -882,16 +599,7 @@ class SAM3DBodyTriplet(BaseModel):
                     prev_camera = init_camera.view(batch_size, -1)
 
                 # Get pose outputs (atlas parameters)
-                if not self.cfg.MODEL.DECODER.get(
-                    "DO_INTERM_SLIM_KEYPOINTS", False
-                ) or (layer_idx == len(self.decoder.layers) - 1):
-                    # If we're not doing slim keypoints (original default) or it's the last decoder layer...
-                    pose_output = self.head_pose(pose_token, prev_pose)
-                else:
-                    # Otherwise, we don't need vertices, so...
-                    pose_output = self.head_pose(
-                        pose_token, prev_pose, slim_keypoints=True
-                    )
+                pose_output = self.head_pose(pose_token, prev_pose)
                 # Get Camera Translation
                 if hasattr(self, "head_camera"):
                     pred_cam = self.head_camera(pose_token, prev_camera)
@@ -899,129 +607,10 @@ class SAM3DBodyTriplet(BaseModel):
                 # Run camera projection
                 pose_output = self.camera_project(pose_output, batch, full_output)
 
-                # Get 2D KPS in crop (we don't need it usually, but it's cheap to compute anyway so why not)
+                # Get 2D KPS in crop
                 pose_output["pred_keypoints_2d_cropped"] = self._full_to_crop(
                     batch, pose_output["pred_keypoints_2d"]
                 )
-
-                # Optionally, do auxiliary 2D keypoint predictions
-                if self.cfg.MODEL.DECODER.get("DO_KEYPOINT_TOKENS_2D_KPS_PRED", False):
-                    num_keypoints = self.keypoint_embedding.weight.shape[0]
-                    if not self.cfg.MODEL.DECODER.get("SEPARATE_AUX_TOKENS_2D", False):
-                        # Then, the atlas-tied 2d kps
-                        pose_output["pred_keypoints_2d_cropped_aux"] = (
-                            self.keypoint_head(
-                                tokens[
-                                    :,
-                                    kps_emb_start_idx : kps_emb_start_idx
-                                    + num_keypoints,
-                                    :,
-                                ]
-                            )
-                        )
-                    else:
-                        # If separate, it's the auxiliary 2d kps
-                        pose_output["pred_keypoints_2d_cropped_aux"] = (
-                            self.keypoint_head(
-                                tokens[
-                                    :,
-                                    kps_emb_aux_start_idx : kps_emb_aux_start_idx
-                                    + num_keypoints,
-                                    :,
-                                ]
-                            )
-                        )
-
-                # Optionally, do auxiliary 3D keypoint predictions
-                if self.cfg.MODEL.DECODER.get("DO_KEYPOINT_TOKENS_3D_KPS_PRED", False):
-                    num_keypoints3d = self.keypoint3d_embedding.weight.shape[0]
-                    if not self.cfg.MODEL.DECODER.get("SEPARATE_AUX_TOKENS_3D", False):
-                        pose_output["pred_keypoints_3d_aux"] = self.keypoint3d_head(
-                            tokens[
-                                :,
-                                kps3d_emb_start_idx : kps3d_emb_start_idx
-                                + num_keypoints3d,
-                                :,
-                            ]
-                        )
-                    else:
-                        # If separate, it's the auxiliary 3d kps
-                        pose_output["pred_keypoints_3d_aux"] = self.keypoint3d_head(
-                            tokens[
-                                :,
-                                kps3d_emb_aux_start_idx : kps3d_emb_aux_start_idx
-                                + num_keypoints3d,
-                                :,
-                            ]
-                        )
-
-                # Optionally, do uncertainty prediction for 2D
-                if self.cfg.MODEL.DECODER.get("LEARNABLE_KPS2D_UNCERTAINTY", None) in [
-                    "v2"
-                ]:
-                    pose_output["pred_keypoints_2d_logsigma"] = (
-                        self.keypoint2d_loss_logsigma(pose_token)
-                    )
-                elif self.cfg.MODEL.DECODER.get(
-                    "LEARNABLE_KPS2D_UNCERTAINTY", None
-                ) in ["v3"]:
-                    num_keypoints = self.keypoint_embedding.weight.shape[0]
-                    pose_output["pred_keypoints_2d_logsigma"] = (
-                        self.keypoint2d_loss_logsigma.weight.repeat(
-                            len(pose_token), 1
-                        ).clone()
-                    )
-                    pose_output["pred_keypoints_2d_logsigma"][
-                        :, self.keypoint_embedding_idxs
-                    ] = self.keypoint2d_loss_logsigma_layer(
-                        tokens[
-                            :, kps_emb_start_idx : kps_emb_start_idx + num_keypoints, :
-                        ]
-                    ).squeeze(
-                        2
-                    )
-
-                # Optionally, do uncertainty prediction for 3D
-                if self.cfg.MODEL.DECODER.get("LEARNABLE_KPS3D_UNCERTAINTY", None) in [
-                    "v2"
-                ]:
-                    pose_output["pred_keypoints_3d_logsigma"] = (
-                        self.keypoint3d_loss_logsigma(pose_token)
-                    )
-
-                    if self.cfg.LOSS_WEIGHTS.get("SMPL_24_KEYPOINTS_3D", 0) != 0:
-                        (
-                            pose_output["pred_keypoints_3d_logsigma"],
-                            pose_output["pred_keypoints_3d_smpl24_logsigma"],
-                        ) = torch.split(
-                            pose_output["pred_keypoints_3d_logsigma"], [70, 24], dim=-1
-                        )
-                elif self.cfg.MODEL.DECODER.get(
-                    "LEARNABLE_KPS3D_UNCERTAINTY", None
-                ) in ["v3"]:
-                    num_keypoints3d = self.keypoint3d_embedding.weight.shape[0]
-                    pose_output["pred_keypoints_3d_logsigma"] = (
-                        self.keypoint3d_loss_logsigma.weight.repeat(
-                            len(pose_token), 1
-                        ).clone()
-                    )
-                    pose_output["pred_keypoints_3d_logsigma"][
-                        :, self.keypoint3d_embedding_idxs
-                    ] = self.keypoint3d_loss_logsigma_layer(
-                        tokens[
-                            :,
-                            kps3d_emb_start_idx : kps3d_emb_start_idx + num_keypoints3d,
-                            :,
-                        ]
-                    ).squeeze(
-                        2
-                    )
-                    if self.cfg.LOSS_WEIGHTS.get("SMPL_24_KEYPOINTS_3D", 0) != 0:
-                        pose_output["pred_keypoints_3d_smpl24_logsigma"] = (
-                            self.keypoint3d_smpl24_loss_logsigma.weight.repeat(
-                                len(pose_token), 1
-                            ).clone()
-                        )
 
                 return pose_output
 
@@ -1046,43 +635,21 @@ class SAM3DBodyTriplet(BaseModel):
 
                     num_keypoints = self.keypoint_embedding.weight.shape[0]
 
-                    # Get current 2D KPS predictions # TODO (jinhyun1): Get 3D kps too, put into the model. 2D helps 2D, doesn't help 3D
+                    # Get current 2D KPS predictions 
                     pred_keypoints_2d_cropped = pose_output[
                         "pred_keypoints_2d_cropped"
-                    ].clone()  # These are -0.5 ~ 0.5 (CHECK!!!!!!!)
+                    ].clone()  # These are -0.5 ~ 0.5
                     pred_keypoints_2d_depth = pose_output[
                         "pred_keypoints_2d_depth"
                     ].clone()
 
-                    # Optionally detach them (backpropping through random sincos.. hmm)
+                    # Optionally detach them
                     if self.cfg.MODEL.DECODER.get(
                         "KEYPOINT_TOKEN_UPDATE_DETACH_KPS", True
                     ):
                         pred_keypoints_2d_cropped = pred_keypoints_2d_cropped.detach()
                         pred_keypoints_2d_depth = pred_keypoints_2d_depth.detach()
 
-                    # This is a hack, as during inference, smpl joints are used, so the 70 atlas kps gets tossed.
-                    # As such, I've stacked smpl joints & 70 atlas kps joints in atlas head, so just for this part, we can keep the 70.
-                    if self.head_pose.atlas.lod == "smpl":
-                        assert (
-                            not self.training
-                        ), "Why are we doing training with SMPL topology?"
-                        assert pred_keypoints_2d_cropped.shape[1] == (
-                            61 + 70
-                        ), pred_keypoints_2d_cropped.shape[1]
-                        assert pred_keypoints_2d_depth.shape[1] == (
-                            61 + 70
-                        ), pred_keypoints_2d_depth.shape[1]
-                        pred_keypoints_2d_cropped = pred_keypoints_2d_cropped[:, -70:]
-                        pred_keypoints_2d_depth = pred_keypoints_2d_depth[:, -70:]
-
-                    # Get the keypoints we're using here
-                    # if not self.head_pose.atlas.lod in ["smplx"]:
-                    assert (
-                        self.head_pose.atlas.lod != "smplx"
-                    ), "SMPLX is not supported for keypoint token update."
-
-                    # have this for atlas or smpl
                     pred_keypoints_2d_cropped = pred_keypoints_2d_cropped[
                         :, self.keypoint_embedding_idxs
                     ]
@@ -1120,7 +687,6 @@ class SAM3DBodyTriplet(BaseModel):
                             :, kps_emb_start_idx : kps_emb_start_idx + num_keypoints, :
                         ] = self.keypoint_posemb_linear(pred_keypoints_2d_cropped_emb)
                     else:
-                        # TODO (jinhyun1): NOTE: Here, note that the OUTPUT is multiplied by 0. upstairs, the INPUT is.
                         token_augment[
                             :, kps_emb_start_idx : kps_emb_start_idx + num_keypoints, :
                         ] = self.keypoint_posemb_linear(pred_keypoints_2d_cropped) * (
@@ -1156,73 +722,19 @@ class SAM3DBodyTriplet(BaseModel):
 
                         if self.cfg.MODEL.DECODER.KEYPOINT_TOKEN_UPDATE in ["v2"]:
                             # Version 2 is projecting & bilinear sampling
-                            if self.head_pose.atlas.lod == "smplx":
-                                # [Jinkun] Temporal skip for eval
-                                assert False
-                                pass
-                            else:
-                                # Version 2 is projecting & bilinear sampling
-                                pred_keypoints_2d_cropped_feats = (
-                                    F.grid_sample(
-                                        image_embeddings,
-                                        pred_keypoints_2d_cropped_sample_points[
-                                            :, :, None, :
-                                        ],  # -1 ~ 1, xy
-                                        mode="bilinear",
-                                        padding_mode="zeros",
-                                        align_corners=False,
-                                    )
-                                    .squeeze(3)
-                                    .permute(0, 2, 1)
-                                )  # B x kps x C
-                                # Zero out invalid locations...
-                                pred_keypoints_2d_cropped_feats = (
-                                    pred_keypoints_2d_cropped_feats
-                                    * (~invalid_mask[:, :, None])
+                            pred_keypoints_2d_cropped_feats = (
+                                F.grid_sample(
+                                    image_embeddings,
+                                    pred_keypoints_2d_cropped_sample_points[
+                                        :, :, None, :
+                                    ],  # -1 ~ 1, xy
+                                    mode="bilinear",
+                                    padding_mode="zeros",
+                                    align_corners=False,
                                 )
-                                # This is ADDING
-                                token_embeddings = token_embeddings.clone()
-                                token_embeddings[
-                                    :,
-                                    kps_emb_start_idx : kps_emb_start_idx
-                                    + num_keypoints,
-                                    :,
-                                ] += self.keypoint_feat_linear(
-                                    pred_keypoints_2d_cropped_feats
-                                )
-                        elif self.cfg.MODEL.DECODER.KEYPOINT_TOKEN_UPDATE in ["v3"]:
-                            # Version 3 is Deformable attention
-
-                            # Reference: https://github.com/fundamentalvision/Deformable-DETR/blob/main/models/ops/modules/ms_deform_attn.py#L78
-                            # self.keypoint_feat_sampling_layers
-                            # TODO: Zero mult invalid before or after output proj?
-                            # TODO: Add posembs before querying? Normalize after? It doesn't actually _exactly_ know where it is rn
-                            # TODO: Maybe localize the sampling offsets more (normalize by n_points). Right now, it's a 4 "pixel" radius
-
-                            # Note that this is post (16, 12) scaling.
-                            pred_keypoints_2d_cropped_sample_points_01 = (
-                                pred_keypoints_2d_cropped_sample_points + 1
-                            ) / 2
-                            pred_keypoints_2d_cropped_feats = self.keypoint_feat_sampling_layers[
-                                layer_idx
-                            ](
-                                query=token_embeddings[
-                                    :,
-                                    kps_emb_start_idx : kps_emb_start_idx
-                                    + num_keypoints,
-                                    :,
-                                ].contiguous(),
-                                reference_points=pred_keypoints_2d_cropped_sample_points_01[
-                                    :, :, None, :
-                                ].contiguous(),
-                                input_flatten=image_embeddings.flatten(2, 3)
+                                .squeeze(3)
                                 .permute(0, 2, 1)
-                                .contiguous(),
-                                input_spatial_shapes=torch.LongTensor(
-                                    [image_embeddings.shape[-2:]]
-                                ).cuda(),
-                                input_level_start_index=torch.LongTensor([0]).cuda(),
-                            )
+                            )  # B x kps x C
                             # Zero out invalid locations...
                             pred_keypoints_2d_cropped_feats = (
                                 pred_keypoints_2d_cropped_feats
@@ -1232,9 +744,12 @@ class SAM3DBodyTriplet(BaseModel):
                             token_embeddings = token_embeddings.clone()
                             token_embeddings[
                                 :,
-                                kps_emb_start_idx : kps_emb_start_idx + num_keypoints,
+                                kps_emb_start_idx : kps_emb_start_idx
+                                + num_keypoints,
                                 :,
-                            ] += pred_keypoints_2d_cropped_feats
+                            ] += self.keypoint_feat_linear(
+                                pred_keypoints_2d_cropped_feats
+                            )
 
                     return token_embeddings, token_augment, pose_output, layer_idx
 
@@ -1257,21 +772,7 @@ class SAM3DBodyTriplet(BaseModel):
                     # Get current 3D kps predictions
                     pred_keypoints_3d = pose_output["pred_keypoints_3d"].clone()
 
-                    # This is a hack, as during inference, smpl joints are used, so the 70 atlas kps gets tossed.
-                    # As such, I've stacked smpl joints & 70 atlas kps joints in atlas head, so just for this part, we can keep the 70.
-                    if self.head_pose.atlas.lod == "smpl":
-                        assert (
-                            not self.training
-                        ), "Why are we doing training with SMPL topology?"
-                        assert pred_keypoints_3d.shape[1] == (
-                            61 + 70
-                        ), pred_keypoints_3d.shape[1]
-                        pred_keypoints_3d = pred_keypoints_3d[:, -70:]
-
-                    assert (
-                        self.head_pose.atlas.lod != "smplx"
-                    ), "SMPLX is not supported for keypoint token update."
-                    # Now, pelvis normalize TODO: (jinhyun1) detach pelvis?
+                    # Now, pelvis normalize
                     pred_keypoints_3d = (
                         pred_keypoints_3d
                         - (
@@ -1294,7 +795,6 @@ class SAM3DBodyTriplet(BaseModel):
                         :,
                     ] = self.keypoint3d_posemb_linear(pred_keypoints_3d)
 
-                    # TODO: (jinhyun1) these 3D KPS tokens should have auxiliary 3D kps pred, just like 2D? Like where they want to belong
                     return token_embeddings, token_augment, pose_output, layer_idx
 
             else:
@@ -1323,106 +823,6 @@ class SAM3DBodyTriplet(BaseModel):
             )
 
         return pose_token, pose_output
-
-    def compute_loss(
-        self, batch: Dict, output: Dict, train: bool = True
-    ) -> torch.Tensor:
-        """
-        Compute losses given the input batch and the regression output
-        Args:
-            batch (Dict): Dictionary containing batch data
-            output (Dict): Dictionary containing the regression output
-            train (bool): Flag indicating whether it is training or validation mode
-        Returns:
-            torch.Tensor : Total loss for current batch
-        """
-        smpl_loss, atlas_loss = None, None
-        if "atlas" in output:
-            if not self.cfg.MODEL.DECODER.get(
-                "DO_INTERM_PREDS", False
-            ) or not self.cfg.MODEL.DECODER.get("DO_INTERM_SUP", False):
-                atlas_loss, atlas_loss_dict = self.compute_atlas_loss(
-                    batch, output["atlas"], train=train
-                )
-            else:
-                num_dec_layers = len(output["atlas_interm"] + [output["atlas"]])
-                batch_size = batch["img"].shape[0]
-
-                # Pretend like it's different samples in the same batch
-                ## Inflate the batch
-                batch_inflate = {}
-                for k, v in batch.items():
-                    if k in [
-                        "img",
-                        "ray_cond",
-                        "__key__",
-                        "dataset_type",
-                        "dataset_name",
-                        "img_ori"
-                    ]:  # These are big and unncessary for loss computation
-                        continue
-                    elif k in ["atlas_conf", "atlas_params"]:
-                        # These are dictionaries themselves
-                        batch_inflate[k] = dict()
-                        for kk, vv in v.items():
-                            batch_inflate[k][kk] = torch.cat(
-                                [vv] * num_dec_layers, dim=0
-                            )
-                    else:
-                        assert v.shape[0] == batch_size
-                        batch_inflate[k] = torch.cat([v] * num_dec_layers, dim=0)
-                        # So it's like [dec0_sample0, dec0_sample1, ..., dec1_sample0, dec1_sample1...]
-                ## Hmm... These are used
-                bs_mnp_pv = copy.deepcopy(
-                    (self._batch_size, self._max_num_person, self._person_valid)
-                )
-                self._batch_size = batch_size * num_dec_layers
-                self._person_valid = (
-                    self._flatten_person(batch_inflate["person_valid"]) > 0
-                )
-                ## Inflate the predictions
-                atlas_output_inflate = dict()
-                for k, v in output["atlas"].items():
-                    if (
-                        (v is None)
-                        or output["atlas_interm"][0].get(k, None) is None
-                        or isinstance(v, np.ndarray)
-                    ):
-                        atlas_output_inflate[k] = v
-                        continue
-                    if (
-                        (isinstance(output["atlas_interm"][0][k], torch.Tensor))
-                        and (output["atlas_interm"][0][k].requires_grad)
-                        and (
-                            self.cfg.MODEL.DECODER.get("DO_INTERM_SUP_WEIGHTS", None)
-                            is not None
-                        )
-                    ):
-                        # Weight the loss (same thing as weighting gradients gradients) for the intermediate terms
-                        assert len(output["atlas_interm"]) == len(
-                            self.cfg.MODEL.DECODER.DO_INTERM_SUP_WEIGHTS
-                        )
-
-                    if not self.cfg.LOSS_WEIGHTS.get('HAND_LOSS_KINEMATIC_ANNEALING', False) or k not in ["joint_params"]:
-                        # Need to preserve original tensors used in forward for annealing hook.
-                        atlas_output_inflate[k] = torch.cat(
-                            [tmp[k] for tmp in output["atlas_interm"] + [output["atlas"]]]
-                        )
-                    else:
-                        atlas_output_inflate[k] = [tmp[k] for tmp in output["atlas_interm"] + [output["atlas"]]]
-                ## In you go
-                atlas_loss, atlas_loss_dict = self.compute_atlas_loss(
-                    batch_inflate, atlas_output_inflate, train=train
-                )
-                ## Put it back I guess
-                self._batch_size, self._max_num_person, self._person_valid = bs_mnp_pv
-
-        assert smpl_loss is None, "SMPL loss is not implemented in Atlas decoder"
-        loss, loss_dict = atlas_loss, atlas_loss_dict
-
-        loss_dict["loss"] = loss_dict["atlas_loss"]
-
-        return loss, loss_dict
 
     def get_atlas_output(self, batch, return_keypoints, return_joint_rotations=False, return_joint_params=False):
         gt_verts, gt_j3d, gt_rots, gt_joint_params = self.head_pose.atlas(
@@ -1496,7 +896,7 @@ class SAM3DBodyTriplet(BaseModel):
 
     def _one_prompt_iter(self, batch, output, prev_prompt, full_output):
         image_embeddings = output["image_embeddings"]
-        hand_embeddings = output.get('hand_embeddings', None) # TODO: Check this...
+        hand_embeddings = output.get('hand_embeddings', None)
         condition_info = output["condition_info"]
         pose_output = output["atlas"]
 
@@ -1942,12 +1342,8 @@ class SAM3DBodyTriplet(BaseModel):
     def forward_step(self, batch: Dict, return_feature_only: bool = False) -> Tuple[Dict, Dict]:
         # Full-image encoder
         full_output = {}
-        if hasattr(self, "full_encoder"):
-            full_output = self.forward_full_branch(batch)
 
         # Crop-image (pose) branch
         pose_output = self.forward_pose_branch(batch, full_output, return_feature_only=return_feature_only)
 
         return pose_output, full_output
-
-    

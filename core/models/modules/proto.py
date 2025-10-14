@@ -138,8 +138,6 @@ class Proto(nn.Module):
                         requires_grad=False,
                     )
                 elif self.lod == 'smplx':
-                    # TODO: mapping lod3 vertices to smplx vertices, not a suboptimal way!
-                    # self.lod3_to_smplx_verts_mapping = torch.sparse.FloatTensor(*load_pickle("/private/home/jinhyun1/codes/3po/atlas_250624/assets/lod_mapping_new.pkl")['lod3_to_smplx']).to_dense()
                     self.keypoint_mapping = nn.Parameter(
                         load_pickle(
                             osp.join(self.model_data_dir, "lod1_joint_to_kps_v4_fixEyeAndChin.pkl")

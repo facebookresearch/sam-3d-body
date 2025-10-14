@@ -143,40 +143,41 @@ class BaseModel(BaseLightningModule):
         )
         return crop_cam_t
 
-    # def convert_to_fp16(self) -> torch.dtype:
-    #     """
-    #     Convert the torso of the model to float16.
-    #     """
+    def convert_to_fp16(self) -> torch.dtype:
+        """
+        Convert the torso of the model to float16.
+        """
+        fp16_type = (
+            torch.float16
+            if self.cfg.TRAIN.get("FP16_TYPE", "float16") == "float16"
+            else torch.bfloat16
+        )
 
-    #     # fp16_type = torch.float16
+        if hasattr(self, "backbone"):
+            self._set_fp16(self.backbone, fp16_type)
+        if hasattr(self, "full_encoder"):
+            self._set_fp16(self.full_encoder, fp16_type)
+        
+        if hasattr(self.backbone, "lhand_pos_embed"):
+            self.backbone.lhand_pos_embed.data = self.backbone.lhand_pos_embed.data.to(
+                fp16_type
+            )
 
-    #     fp16_type = (
-    #         torch.float16
-    #         if self.cfg.TRAIN.get("FP16_TYPE", "float16") == "float16"
-    #         else torch.bfloat16
-    #     )
+        if hasattr(self.backbone, "rhand_pos_embed"):
+            self.backbone.rhand_pos_embed.data = self.backbone.rhand_pos_embed.data.to(
+                fp16_type
+            )
 
-    #     if hasattr(self, "backbone"):
-    #         self._set_fp16(self.backbone, fp16_type)
-    #     if hasattr(self, "full_encoder"):
-    #         self._set_fp16(self.full_encoder, fp16_type)
+        return fp16_type
 
-    #     return fp16_type
-
-    # def _set_fp16(self, module, fp16_type):
-    #     if hasattr(module, "pos_embed"):
-    #         module.apply(partial(convert_module_to_f16, dtype=fp16_type))
-    #         module.pos_embed.data = module.pos_embed.data.to(fp16_type)
-    #     elif hasattr(module.encoder, "rope_embed"):
-    #         # DINOv3
-    #         module.encoder.apply(partial(convert_to_fp16_safe, dtype=fp16_type))
-    #         module.encoder.rope_embed = module.encoder.rope_embed.to(fp16_type)
-    #     else:
-    #         # DINOv2
-    #         module.encoder.pos_embed.data = module.encoder.pos_embed.data.to(fp16_type)
-
-    # def convert_to_fp32(self) -> None:
-    #     """
-    #     Convert the torso of the model to float32.
-    #     """
-    #     raise NotImplementedError
+    def _set_fp16(self, module, fp16_type):
+        if hasattr(module, "pos_embed"):
+            module.apply(partial(convert_module_to_f16, dtype=fp16_type))
+            module.pos_embed.data = module.pos_embed.data.to(fp16_type)
+        elif hasattr(module.encoder, "rope_embed"):
+            # DINOv3
+            module.encoder.apply(partial(convert_to_fp16_safe, dtype=fp16_type))
+            module.encoder.rope_embed = module.encoder.rope_embed.to(fp16_type)
+        else:
+            # DINOv2
+            module.encoder.pos_embed.data = module.encoder.pos_embed.data.to(fp16_type)

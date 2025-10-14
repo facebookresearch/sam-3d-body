@@ -206,7 +206,6 @@ class ATLAS46Head(nn.Module):
             pred_face_for_forward = pred_face_for_forward.detach()
 
         ################################################################################################################################################
-        # TODO: Detach or not detach? If I do this naively, others still get gradients.
         if self.replace_local_with_pred_global_wrist_rot:
             # First, forward just FK
             self.atlas.lbs_fn.fk_only = True
