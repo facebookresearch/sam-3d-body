@@ -3,7 +3,10 @@ from .prompt_encoder import PromptEncoder
 from .promptable_decoder import PromptableDecoder
 
 
+
 def build_decoder(cfg, context_dim=None):
+    from .promptable_decoder import PromptableDecoder
+    
     if cfg.TYPE == "sam":
         return PromptableDecoder(
             dims=cfg.DIM,

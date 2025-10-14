@@ -106,6 +106,8 @@ class PromptableDecoder(nn.Module):
         channel_first: bool = True,
         token_to_pose_output_fn=None,
         keypoint_token_update_fn=None,
+        hand_embeddings=None,
+        hand_augment=None,
     ):
         """
         Args:
@@ -116,20 +118,38 @@ class PromptableDecoder(nn.Module):
             image_embedding = image_embedding.flatten(2).permute(0, 2, 1)
             if image_augment is not None:
                 image_augment = image_augment.flatten(2).permute(0, 2, 1)
+            if hand_embeddings is not None:
+                hand_embeddings = hand_embeddings.flatten(2).permute(0, 2, 1)
+                hand_augment = hand_augment.flatten(2).permute(0, 2, 1)
+                if len(hand_augment) == 1:
+                    # inflate batch dimension
+                    assert len(hand_augment.shape) == 3
+                    hand_augment = hand_augment.repeat(len(hand_embeddings), 1, 1)
 
         if self.do_interm_preds:
             assert token_to_pose_output_fn is not None
             all_pose_outputs = []
 
         for layer_idx, layer in enumerate(self.layers):
-            token_embedding, image_embedding = layer(
-                token_embedding,
-                image_embedding,
-                token_augment,
-                image_augment,
-                token_mask,
-            )
-            if self.do_interm_preds:
+            if hand_embeddings is None:
+                token_embedding, image_embedding = layer(
+                    token_embedding,
+                    image_embedding,
+                    token_augment,
+                    image_augment,
+                    token_mask,
+                )
+            else:
+                token_embedding, image_embedding = layer(
+                    token_embedding,
+                    torch.cat([image_embedding, hand_embeddings], dim=1),
+                    token_augment,
+                    torch.cat([image_augment, hand_augment], dim=1),
+                    token_mask,
+                )
+                image_embedding = image_embedding[:, :image_augment.shape[1]]
+                
+            if self.do_interm_preds and layer_idx < len(self.layers) - 1:
                 curr_pose_output = token_to_pose_output_fn(
                     self.norm_final(token_embedding),
                     prev_pose_output=(
@@ -139,16 +159,27 @@ class PromptableDecoder(nn.Module):
                 )
                 all_pose_outputs.append(curr_pose_output)
 
-            if self.keypoint_token_update:
-                assert keypoint_token_update_fn is not None
-                # Be careful - this looks like it's not in-place updated, but who knows? curr_pose_output is.
-                token_embedding, token_augment, _, _ = keypoint_token_update_fn(
-                    token_embedding, token_augment, curr_pose_output, layer_idx
-                )
+                if self.keypoint_token_update:
+                    assert keypoint_token_update_fn is not None
+                    # Be careful - this looks like it's not in-place updated, but who knows? curr_pose_output is.
+                    token_embedding, token_augment, _, _ = keypoint_token_update_fn(
+                        token_embedding, token_augment, curr_pose_output, layer_idx
+                    )
+
+        # save_pickle(all_pose_outputs, "/private/home/jinhyun1/all_pose_outputs.pkl"); print("SAVING!3"); breakpoint()
 
         out = self.norm_final(token_embedding)
 
         if self.do_interm_preds:
+            curr_pose_output = token_to_pose_output_fn(
+                out,
+                prev_pose_output=(
+                    all_pose_outputs[-1] if len(all_pose_outputs) > 0 else None
+                ),
+                layer_idx=layer_idx,
+            )
+            all_pose_outputs.append(curr_pose_output)
+
             return out, all_pose_outputs
         else:
             return out

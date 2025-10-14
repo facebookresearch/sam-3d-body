@@ -1,57 +1,62 @@
+import os
 import os.path as osp
+import math
 
+import numpy as np
 import torch
 import torch.nn as nn
 
 import roma
 import pymomentum.geometry as pym_geo
 
-from .atlas_utils import load_pickle, batch6DFromXYZ, get_pose_feats_6d_batched_from_joint_params, SparseLinear, compact_cont_to_model_params_hand
+# from linear_blend_skinning_cuda import LinearBlendSkinningCuda
 
-def get_pose_feats_6d_batched_from_joint_params(joint_params):
-    joint_euler_angles = joint_params.reshape(-1, 216, 7)[:, 2:, 3:6] # B x 214 x 3
+from .atlas_utils import load_pickle, batch6DFromXYZ, batchXYZfrom6D, get_pose_feats_6d_batched_from_joint_params, SparseLinear, compact_cont_to_model_params_hand
+
+# changed
+def get_pose_feats_6d_batched_from_joint_params_127(joint_params):
+    joint_euler_angles = joint_params.reshape(-1, 127, 7)[:, 2:, 3:6] # B x 214 x 3
     joint_6d_feat = batch6DFromXYZ(joint_euler_angles)
     joint_6d_feat[:, :, 0] -= 1 # so all 0 when no rotation.
     joint_6d_feat[:, :, 4] -= 1 # so all 0 when no rotation.
     joint_6d_feat = joint_6d_feat.flatten(1, 2)
     return joint_6d_feat
 
-class ATLAS46(nn.Module):
+class Proto(nn.Module):
     # num_hand_shape_comps: A new parameter indicating # of hand shape comps *per hand*.
     # These are merged directly into the regular shape comps, but at the end.
     def __init__(self,
                  model_data_dir,
-                 num_shape_comps,
-                 num_scale_comps,
-                 num_hand_comps,
-                 num_expr_comps,
-                 num_hand_shape_comps=0,
-                 lod="lod3",
+                 num_body_shape_comps=20,
+                 num_face_shape_comps=20,
+                 num_hand_shape_comps=5,
+                 num_hand_scale_comps=25,
+                 num_hand_pose_comps=32,
+                 lod="lod1",
                  load_keypoint_mapping=False,
-                 verbose=False,
-                 fix_kps_eye_and_chin=True,
-                 znorm_fullbody_scales=True,
-                 enable_slim_keypoint_mapping=False):
+                 fix_kps_eye_and_chin=False,
+                 verbose=False):
         super().__init__()
-
-        assert num_hand_shape_comps != 0, (
-            "Why is num_hand_shape_comps 0? This assert is here because user may want to use hand shape comps, "
-            + "but they only add it to num_shape_comps and then they don't pass it into ATLAS, which fails silently."
-        )
 
         # Set Class Fields
         self.model_data_dir = model_data_dir
-        self.num_shape_comps = num_shape_comps
-        self.num_scale_comps = num_scale_comps
-        self.num_hand_comps = num_hand_comps
-        self.num_expr_comps = num_expr_comps
+        
+        self.num_body_shape_comps = num_body_shape_comps
+        self.num_face_shape_comps = num_face_shape_comps
         self.num_hand_shape_comps = num_hand_shape_comps
-        self.lod = lod.lower(); assert self.lod in ['smpl', 'smplx', 'lod3', 'lod4', 'lod5']
-        if self.lod == 'smplx': print("WARNING! ATLAS-to-SMPLX mapping is suboptimal for face")
+        self.num_shape_comps = self.num_body_shape_comps + self.num_face_shape_comps + self.num_hand_shape_comps
+
+        self.num_body_scale_comps = 18 # Fixed; independent mean/std
+        self.num_hand_scale_comps = num_hand_scale_comps
+        self.num_scale_comps = self.num_body_scale_comps + self.num_hand_scale_comps
+        
+        self.num_hand_pose_comps = num_hand_pose_comps
+        
+        self.num_expr_comps = 72 # Fixed
+        
+        self.lod = lod.lower(); assert self.lod in ['lod1']
         self.load_keypoint_mapping = load_keypoint_mapping
-        self.znorm_fullbody_scales = znorm_fullbody_scales
-        self.enable_slim_keypoint_mapping = enable_slim_keypoint_mapping
-        # if self.load_keypoint_mapping: assert self.lod == 'lod3', "308 Keypoints only supported for LOD3"
+        if self.load_keypoint_mapping: assert self.lod == 'lod1', "308 Keypoints only supported for lod1"
         self.verbose = verbose
 
         # Load Model
@@ -60,36 +65,29 @@ class ATLAS46(nn.Module):
         if self.verbose: print(f"Done loading pkl!")
 
         # Load Shape & Scale Bases
-        assert 2 * self.num_hand_shape_comps <= self.num_shape_comps, "Hand shape components are part of overall shape comps; plan accordingly."
-        self.shape_mean = nn.Parameter(model_dict['shape_mean'], requires_grad=False) # 115834 x 3
-        self.shape_comps = nn.Parameter(model_dict['shape_comps'][:300][:self.num_shape_comps - 2 * self.num_hand_shape_comps], 
-                                        requires_grad=False) # num_shape_comps x 115834 x 3
-
-        if self.num_hand_shape_comps != 0:
-            if self.verbose: print(f"We're using {self.num_hand_shape_comps} shape components per hand!")
-            self.shape_comps = nn.Parameter(torch.cat([self.shape_comps.data, 
-                                                       model_dict['shape_comps'][300:332][:self.num_hand_shape_comps], # RIGHT
-                                                       model_dict['shape_comps'][332:364][:self.num_hand_shape_comps], # LEFT
-                                                      ], dim=0),
-                                            requires_grad=False)
+        if self.verbose: print("ATLAS is using {} shape components ({} body, {} face, {} hand), {} scale components ({} body, {} hand), {} pose PCA components per hand.".format(
+            self.num_shape_comps,
+            self.num_body_shape_comps,
+            self.num_face_shape_comps,
+            self.num_hand_shape_comps,
+            self.num_scale_comps,
+            self.num_body_scale_comps,
+            self.num_hand_scale_comps,
+            self.num_hand_pose_comps,
+        ))
+        self.shape_mean = nn.Parameter(model_dict['shape_mean'], requires_grad=False) # 18439 x 3
+        self.shape_comps = nn.Parameter(torch.cat([
+            model_dict['shape_comps'][:20][:self.num_body_shape_comps],
+            model_dict['shape_comps'][20:40][:self.num_face_shape_comps],
+            model_dict['shape_comps'][40:45][:self.num_hand_shape_comps],
+        ], dim=0), requires_grad=False) # num_shape_comps x 18439 x 3
         
-        self.scale_mean = nn.Parameter(model_dict['scale_mean'], requires_grad=False) # 68
-        assert self.num_scale_comps >= 18 and (self.num_scale_comps - 18) % 2 == 0, \
-            "num_scale_comps must be at least 18, as each body scale has its own component, and num_scale_comps - 18 must be divisible by 2, since each hand then gets (num_scale_comps - 18) / 2 components."
-        
+        self.scale_mean = nn.Parameter(model_dict['scale_mean'], requires_grad=False)
+        assert self.num_scale_comps >= 18, "Should have at least 18 scale comps, since the body has 18 indep. comps. Aftewards, it's hand."
         self.scale_comps = nn.Parameter(torch.cat([
-            model_dict['scale_comps'][:18], # Full-body components
-            model_dict['scale_comps'][18:18+25][:(self.num_scale_comps - 18) // 2], # RIGHT hand components
-            model_dict['scale_comps'][18+25:18+50][:(self.num_scale_comps - 18) // 2], # LEFT hand components
-        ], dim=0), requires_grad=False) # num_scale_comps x 68
-
-        # Hold onto these
-        self.fullbody_scales_mean = nn.Parameter(model_dict['fullbody_scales_mean'], requires_grad=False)
-        self.fullbody_scales_std = nn.Parameter(model_dict['fullbody_scales_std'], requires_grad=False)
-        if self.znorm_fullbody_scales:
-            if self.verbose: print("Replacing the first 18 scale components with z-norm!")
-            self.scale_mean.data[:18] = self.fullbody_scales_mean.data
-            self.scale_comps.data[torch.arange(18), torch.arange(18)] = self.fullbody_scales_std.data
+            model_dict['scale_comps'][:18][:self.num_body_scale_comps],
+            model_dict['scale_comps'][18:18+25][:self.num_hand_scale_comps],
+        ], dim=0), requires_grad=False)
 
         # Load Faces
         self.faces = nn.Parameter(model_dict['faces'][self.lod], requires_grad=False) # F x 3
@@ -97,53 +95,71 @@ class ATLAS46(nn.Module):
         # Load Pose Correctives
         if self.verbose: print(f"Loading Pose Correctives...")
         self.posedirs = nn.Sequential(
-            SparseLinear(214 * 6, 214 * 24, sparse_mask=model_dict['posedirs_sparse_mask'], bias=False),
+            SparseLinear(125 * 6, 125 * 24, sparse_mask=model_dict['posedirs_sparse_mask'], bias=False),
             nn.ReLU(),
-            nn.Linear(214 * 24, 18215 * 3, bias=False))
+            nn.Linear(125 * 24, 18439 * 3, bias=False))
         self.posedirs.load_state_dict(model_dict['posedirs_state_dict'])
         for p in self.posedirs.parameters():
             p.requires_grad = False
-        if self.lod != "lod3":
-            assert self.lod in ['smpl', 'smplx']
-            lod3_to_other_weight = torch.sparse.FloatTensor(*load_pickle(osp.join(self.model_data_dir, "lod_mapping.pkl"))[f"lod3_to_{self.lod}"])
+        if self.lod != "lod1":
+            lod1_to_other_weight = torch.sparse.FloatTensor(*load_pickle(osp.join(self.model_data_dir, "lod_mapping.pkl"))[self.lod])
             self.posedirs[2].weight = nn.Parameter(
-                (lod3_to_other_weight @ self.posedirs[2].weight.unflatten(0, (-1, 3)).flatten(1, 2))\
+                (lod1_to_other_weight @ self.posedirs[2].weight.unflatten(0, (-1, 3)).flatten(1, 2))\
                     .unflatten(1, (3, -1)).flatten(0, 1), 
                 requires_grad=False)
 
         self.lbs_fn = pym_geo.Character.load_fbx(
-            osp.join(self.model_data_dir, "lod3.fbx"), 
-            osp.join(self.model_data_dir, 'compact_v6_0_withjaw_latest_25_06_05.model'),
+            osp.join(self.model_data_dir, "trinity_basesewn_lod1_tris_v4.0.2.fbx"), 
+            osp.join(self.model_data_dir, 'compact_v6_0.model'),
         )
-        self.lbs_fn_infos = nn.ParameterDict({k: nn.Parameter(v.float(), 
-                                            requires_grad=False) for k, v in load_pickle(osp.join(self.model_data_dir, "lbs_fn_infos.pkl")).items()})
+        self.lbs_fn_infos = nn.ParameterDict({k: nn.Parameter(v.float(), requires_grad=False) for k, v in load_pickle(osp.join(self.model_data_dir, "lbs_fn_infos.pkl")).items()})
 
         # Load Hand PCA
         self._load_hand_prior()
 
         # Load Expressions
-        self.exprdirs = nn.Parameter(model_dict['exprdirs'][:self.num_expr_comps], requires_grad=False)
+        self.exprdirs = nn.Parameter(model_dict['exprdirs'], requires_grad=False)
 
         # Load Keypoint Mapping
         if self.load_keypoint_mapping:
+            assert self.lod in ["lod1", "smpl", "smplx"]
             if not fix_kps_eye_and_chin:
-                assert self.lod in ["lod3"]
-                self.keypoint_mapping = nn.Parameter(load_pickle(osp.join(self.model_data_dir, "lod3_joint_to_kps_v4.pkl")), requires_grad=False)
+                assert self.lod in ["lod1"]
+                self.keypoint_mapping = nn.Parameter(model_dict['keypoint_mapping_dict']['keypoint_mapping'], requires_grad=False)
             else:
-                assert self.lod in ["lod3", "smpl"]
-                if self.verbose: print("Using an updated KPS mapping w/ eyes & chin tied to vertices, not joints.")
-                if self.lod == "smpl": print("SMPL to KPS for ATLAS is a bit suboptimal")
-                self.keypoint_mapping = nn.Parameter(load_pickle(osp.join(self.model_data_dir, f"{self.lod}_joint_to_kps_v4_fixEyeAndChin.pkl")), requires_grad=False)
-            self.general_expression_skeleton_kps_dict = model_dict['keypoint_mapping_lod3_dict']['general_expression_skeleton_kps_dict']
-            self.keypoint_names_308 = model_dict['keypoint_mapping_lod3_dict']['keypoint_names_308']
+                if self.lod in ["lod1", "smpl"]:
+                    self.keypoint_mapping = nn.Parameter(
+                        load_pickle(
+                            osp.join(
+                                self.model_data_dir,
+                                f"{self.lod}_joint_to_kps_v4_fixEyeAndChin.pkl",
+                            )
+                        ),
+                        requires_grad=False,
+                    )
+                elif self.lod == 'smplx':
+                    self.keypoint_mapping = nn.Parameter(
+                        load_pickle(
+                            osp.join(self.model_data_dir, "lod1_joint_to_kps_v4_fixEyeAndChin.pkl")
+                        ),
+                        requires_grad=False,
+                    )
+            self.general_expression_skeleton_kps_dict = model_dict['keypoint_mapping_dict']['general_expression_skeleton_kps_dict']
+            self.keypoint_names_308 = model_dict['keypoint_mapping_dict']['keypoint_names_308']
                 
             
         # Map from LOD5 to other LODs.
-        if self.lod != "lod5":
+        if self.lod != "lod1":
             self._process_lod()
 
-        if self.lod == "lod3":
-            self.register_buffer('smpl_J_regressor', load_pickle(osp.join(self.model_data_dir, 'lod3_J_regressor.pkl')), persistent=False)
+        # Load parameter limits
+        self.model_param_limits = nn.Parameter(torch.FloatTensor(self.lbs_fn_infos['model_param_limits']), requires_grad=False)
+
+        # Make life easier by having a mask of flexibles
+        self.flexible_model_params_mask = nn.Parameter(
+            (self.model_param_limits[:, 0] == 0) 
+            & (self.model_param_limits[:, 1] == 0) 
+            & (self.model_param_limits[:, 2] != 0), requires_grad=False)
 
     def _process_lod(self):
         if self.verbose: print(f"Converting to {self.lod}...")
@@ -164,23 +180,54 @@ class ATLAS46(nn.Module):
         hand_prior_dict = load_pickle(osp.join(self.model_data_dir, "hand_pose_prior_compact.pkl"))
 
         self.hand_pose_mean = nn.Parameter(hand_prior_dict['hand_pose_mean'], requires_grad=False)
-        self.hand_pose_comps = nn.Parameter(hand_prior_dict['hand_pose_comps'][:self.num_hand_comps], requires_grad=False)
+        self.hand_pose_comps = nn.Parameter(hand_prior_dict['hand_pose_comps'][:self.num_hand_pose_comps], requires_grad=False)
         self.hand_joint_idxs_left = hand_prior_dict['hand_joint_idxs_left']
         self.hand_joint_idxs_right = hand_prior_dict['hand_joint_idxs_right']
 
     def replace_hands_in_pose(self, full_pose_params, hand_pose_params):
-        assert full_pose_params.shape[1] == 139
+        assert full_pose_params.shape[1] == 136
 
         # This drops in the hand poses from hand_pose_params (PCA 6D) into full_pose_params.
         # Split into left and right hands
-        left_hand_params, right_hand_params = torch.split(
-            hand_pose_params, [self.num_hand_comps, self.num_hand_comps], dim=1)
+        if hand_pose_params.shape[1] == 108:
+            left_hand_params, right_hand_params = torch.split(
+                hand_pose_params, [54, 54], dim=1
+            )
 
-        # Change from cont to model params
-        left_hand_params_model_params = compact_cont_to_model_params_hand(
-            self.hand_pose_mean + torch.einsum('da,ab->db', left_hand_params, self.hand_pose_comps))
-        right_hand_params_model_params = compact_cont_to_model_params_hand(
-            self.hand_pose_mean + torch.einsum('da,ab->db', right_hand_params, self.hand_pose_comps))
+            # Change from cont to model params
+            left_hand_params_model_params = compact_cont_to_model_params_hand(
+                self.hand_pose_mean
+                + left_hand_params
+            )
+            right_hand_params_model_params = compact_cont_to_model_params_hand(
+                self.hand_pose_mean
+                + right_hand_params
+            )
+        else:
+            assert hand_pose_params.shape[1] == 64
+            left_hand_params, right_hand_params = torch.split(
+                hand_pose_params, [32, 32], dim=1
+            )
+
+            # Change from cont to model params
+            if not hasattr(self, 'hand_pose_comps_ori'):
+                left_hand_params_model_params = compact_cont_to_model_params_hand(
+                    self.hand_pose_mean
+                    + torch.einsum("da,ab->db", left_hand_params, self.hand_pose_comps)
+                )
+                right_hand_params_model_params = compact_cont_to_model_params_hand(
+                    self.hand_pose_mean
+                    + torch.einsum("da,ab->db", right_hand_params, self.hand_pose_comps)
+                )
+            else:
+                left_hand_params_model_params = compact_cont_to_model_params_hand(
+                    self.hand_pose_mean
+                    + torch.einsum("da,ab->db", left_hand_params, self.hand_pose_comps_ori)
+                )
+                right_hand_params_model_params = compact_cont_to_model_params_hand(
+                    self.hand_pose_mean
+                    + torch.einsum("da,ab->db", right_hand_params, self.hand_pose_comps_ori)
+                )
 
         # Drop it in
         full_pose_params[:, self.hand_joint_idxs_left] = left_hand_params_model_params
@@ -200,11 +247,15 @@ class ATLAS46(nn.Module):
                 do_pcblend=True,
                 return_joint_coords=False,
                 return_model_params=False,
+                return_joint_rotations=False,
+                return_joint_params=False,
                 mask_flexibles=False,
                 mask_flexibles_pose_only=False,
                 scale_offsets=None,
-                vertex_offsets=None,
-                slim_keypoints=False):
+                vertex_offsets=None):
+        
+        if body_pose_params.shape[-1] == 133:
+            body_pose_params = body_pose_params[..., :130]
 
         # Convert from scale and shape params to actual scales and vertices
         ## Add singleton batches in case...
@@ -228,33 +279,24 @@ class ATLAS46(nn.Module):
         # Now, figure out the pose.
         ## 10 here is because it's more stable to optimize global translation in meters.
         ## LBS works in cm (global_scale is [1, 1, 1]).
-        full_pose_params = torch.cat([global_trans * 10, global_rot, body_pose_params], dim=1) # B x 204
+        full_pose_params = torch.cat([global_trans * 10, global_rot, body_pose_params], dim=1) # B x 127
         ## Put in hands
         if hand_pose_params is not None:
             full_pose_params = self.replace_hands_in_pose(full_pose_params, hand_pose_params)
         ## Get the 1512 joint params
         ## Optinally mask out flexibles
         if mask_flexibles and mask_flexibles_pose_only:
-            full_pose_params = full_pose_params * ~self.flexible_model_params_mask[None, :139]
+            full_pose_params = full_pose_params * ~self.flexible_model_params_mask[None, :136]
         model_params = torch.cat([full_pose_params, scales], dim=1)
         ## Optinally mask out flexibles
         if mask_flexibles and not mask_flexibles_pose_only:
             model_params = model_params * ~self.flexible_model_params_mask[None, :]
         joint_params = model_params @ self.lbs_fn_infos.param_transform.T
 
-        if slim_keypoints:
-            assert self.enable_slim_keypoint_mapping, "Must enable slim keypoint mapping capability"
-            assert return_keypoints, "I think there is 0 reason to do slim keypoints if you're not returning keypoints"
-            # Here, we're basically just computing keypoints
-            template_verts = template_verts[:, self.vert_slim_idxs, :]
-
         # Get pose correctives
         if do_pcblend:
-            pose_6d_feats = get_pose_feats_6d_batched_from_joint_params(joint_params)
-            if not slim_keypoints:
-                pose_corrective_offsets = self.posedirs(pose_6d_feats).reshape(len(pose_6d_feats), -1, 3)
-            else:
-                pose_corrective_offsets = self.posedirs_slim(pose_6d_feats).reshape(len(pose_6d_feats), -1, 3)
+            pose_6d_feats = get_pose_feats_6d_batched_from_joint_params_127(joint_params)
+            pose_corrective_offsets = self.posedirs(pose_6d_feats).reshape(len(pose_6d_feats), -1, 3)
             template_verts = template_verts + pose_corrective_offsets
 
         # Finally, LBS
@@ -291,20 +333,17 @@ class ATLAS46(nn.Module):
         if return_keypoints:
             # Get sapiens 308 keypoints
             assert self.load_keypoint_mapping
-            model_vert_joints = torch.cat([curr_skinned_verts, curr_joint_coords], dim=1) # B x (num_verts + 204) x 3
-            if not slim_keypoints:
-                model_keypoints_pred = (self.keypoint_mapping @ model_vert_joints.permute(1, 0, 2).flatten(1, 2)).reshape(-1, model_vert_joints.shape[0], 3).permute(1, 0, 2)
-            else:
-                model_keypoints_pred = (self.keypoint_mapping_slim @ model_vert_joints.permute(1, 0, 2).flatten(1, 2)).reshape(-1, model_vert_joints.shape[0], 3).permute(1, 0, 2)
+            model_vert_joints = torch.cat([curr_skinned_verts, curr_joint_coords], dim=1) # B x (num_verts + 127) x 3
+            model_keypoints_pred = (self.keypoint_mapping @ model_vert_joints.permute(1, 0, 2).flatten(1, 2)).reshape(-1, model_vert_joints.shape[0], 3).permute(1, 0, 2)
             to_return = to_return + [model_keypoints_pred]
         if return_joint_coords:
             to_return = to_return + [curr_joint_coords]
         if return_model_params:
             to_return = to_return + [model_params]
-
-        if slim_keypoints:
-            # vertices are nonsense
-            to_return[0] = None
+        if return_joint_rotations:
+            to_return = to_return + [joint_state_r]
+        if return_joint_params:
+            to_return = to_return + [joint_params]
 
         if len(to_return) == 1: return to_return[0]
         else: return tuple(to_return)

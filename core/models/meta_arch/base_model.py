@@ -35,6 +35,7 @@ class BaseModel(BaseLightningModule):
         inputs: torch.Tensor,
         crop_width: bool = False,
         is_full: bool = False,  # whether for full_branch
+        crop_hand: int = 0,
     ) -> torch.Tensor:
         image_mean = self.image_mean if not is_full else self.full_image_mean
         image_std = self.image_std if not is_full else self.full_image_std
@@ -46,10 +47,21 @@ class BaseModel(BaseLightningModule):
         batch_inputs = (inputs - image_mean) / image_std
 
         if crop_width:
-            if self.cfg.MODEL.BACKBONE.TYPE in ["vit_hmr"]:
+            if crop_hand > 0:
+                batch_inputs = batch_inputs[:, :, :, crop_hand:-crop_hand]
+            elif self.cfg.MODEL.BACKBONE.TYPE in [
+                "vit_hmr",
+                "hmr2",
+                "vit",
+                "vit_hmr_triplet",
+            ]:
                 # HMR2.0 backbone (ViTPose) assumes a different aspect ratio as input size
                 batch_inputs = batch_inputs[:, :, :, 32:-32]
-            elif self.cfg.MODEL.BACKBONE.TYPE in ["vit_hmr_512_384"]:
+            elif self.cfg.MODEL.BACKBONE.TYPE in [
+                "vit_hmr_512_384",
+                "vit_hmr_triplet_512_384",
+                "vit_l_triplet_512_384",
+            ]:
                 batch_inputs = batch_inputs[:, :, :, 64:-64]
             else:
                 raise Exception
@@ -135,9 +147,6 @@ class BaseModel(BaseLightningModule):
         """
         Convert the torso of the model to float16.
         """
-
-        # fp16_type = torch.float16
-
         fp16_type = (
             torch.float16
             if self.cfg.TRAIN.get("FP16_TYPE", "float16") == "float16"
@@ -148,6 +157,16 @@ class BaseModel(BaseLightningModule):
             self._set_fp16(self.backbone, fp16_type)
         if hasattr(self, "full_encoder"):
             self._set_fp16(self.full_encoder, fp16_type)
+        
+        if hasattr(self.backbone, "lhand_pos_embed"):
+            self.backbone.lhand_pos_embed.data = self.backbone.lhand_pos_embed.data.to(
+                fp16_type
+            )
+
+        if hasattr(self.backbone, "rhand_pos_embed"):
+            self.backbone.rhand_pos_embed.data = self.backbone.rhand_pos_embed.data.to(
+                fp16_type
+            )
 
         return fp16_type
 
@@ -162,9 +181,3 @@ class BaseModel(BaseLightningModule):
         else:
             # DINOv2
             module.encoder.pos_embed.data = module.encoder.pos_embed.data.to(fp16_type)
-
-    def convert_to_fp32(self) -> None:
-        """
-        Convert the torso of the model to float32.
-        """
-        raise NotImplementedError
