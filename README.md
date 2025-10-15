@@ -1,8 +1,8 @@
-# SAM 3D: Segment Anything 
+# SAM 3D Body: Single Image Human Mesh Recovery 
 
 **[AI at Meta, FAIR](https://ai.meta.com/research/)**
 
-Xitong Yang*, Devansh Kukreja*, Don Pinkus*, Taosha Fan, David Park, Soyong Shin, Jinkun Cao, Jiawei Liu, Nicolas Ugrinovic, Anushka Sagar†, Jitendra Malik†, Piotr Dollar†, Kris Kitani†
+[Xitong Yang](https://scholar.google.com/citations?user=k0qC-7AAAAAJ&hl=en)*, [Devansh Kukreja](https://www.linkedin.com/in/devanshkukreja)*, [Don Pinkus](https://www.linkedin.com/in/don-pinkus-9140702a)*, [Taosha Fan](https://scholar.google.com/citations?user=3PJeg1wAAAAJ&hl=en), [David Park](https://jindapark.github.io/), [Soyong Shin](https://yohanshin.github.io/), [Jinkun Cao](https://www.jinkuncao.com/), [Jiawei Liu](https://jia-wei-liu.github.io/), [Nicolas Ugrinovic](https://www.iri.upc.edu/people/nugrinovic/), [Anushka Sagar](https://www.linkedin.com/in/anushkasagar)†, [Jitendra Malik](https://people.eecs.berkeley.edu/~malik/)†, [Piotr Dollar](https://pdollar.github.io/)†, [Kris Kitani](https://kriskitani.github.io/)†
 
 *Core contributors, †Project leads
 
@@ -10,9 +10,85 @@ Xitong Yang*, Devansh Kukreja*, Don Pinkus*, Taosha Fan, David Park, Soyong Shin
 
 ![SAM 3D Body Model Architecture](assets/model_diagram.png?raw=true)
 
-**SAM 3D Body** is a foundation model for estimating 3D human pose and shape from single images. We address key limitations in existing approaches by focusing on data quality and diversity. Unlike previous methods that rely on noise-prone pseudo-ground-truth annotations, SAM 3D Body leverages high-quality supervision from multi-view capture systems, synthetic data, and a scalable data engine for mining challenging scenarios. 
+**SAM 3D Body (3DB)** is a promptable foundation model for single-image 3D human mesh recovery (HMR). Our method emphasizes data quality and diversity to maximize performance, addressing key problems with noisy pseudo-ground-truth meshes commonly used in public datasets. We introduce the XR Body model (XRB), a new parametric mesh representation that decouples skeletal pose and body shape for improved accuracy and interpretability.
 
-The model employs an encoder-decoder architecture to regress parametric body model parameters, with explicit separation of pose and shape for better interpretability. Following the promptable design paradigm of SAM, inference can be guided by lightweight prompts such as 2D keypoints or masks. The model estimates camera intrinsics to handle perspective distortion, making it robust for close-range images with diverse viewpoints, poses, and clothing.
+3DB employs an encoder-decoder architecture and supports auxiliary prompts, including 2D keypoints and masks, enabling user-guided inference similar to the SAM family of models. We derive high-quality annotations from a multi-stage annotation pipeline using differentiable optimization, multi-view geometry, dense keypoint detection, and a data engine to collect and annotated data covering both common and rare poses across a wide range of viewpoints. Our experiments demonstrate substantial improvements over prior methods, with robust performance on challenging scenarios such as occlusions and rare poses.
+
+## Visual Comparisons
+
+Our SAM 3D Body method shows significant improvements over existing approaches across diverse scenarios:
+
+<table>
+<thead>
+<tr>
+<th align="center">Input</th>
+<th align="center">CameraHMR</th>
+<th align="center">NLF</th>
+<th align="center">4DHumans (HMR2.0b)</th>
+<th align="center"><strong>SAM 3D Body (Ours)</strong></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td align="center"><strong>Sample 1</strong></td>
+<td align="center"><img src="assets/qualitative_comparisons/sample1/camerahmr.png" alt="Sample 1 - CameraHMR" width="120"></td>
+<td align="center"><img src="assets/qualitative_comparisons/sample1/nlf.png" alt="Sample 1 - NLF" width="120"></td>
+<td align="center"><img src="assets/qualitative_comparisons/sample1/4dhumans.png" alt="Sample 1 - 4DHumans (HMR2.0b)" width="120"></td>
+<td align="center"><img src="assets/qualitative_comparisons/sample1/SAM 3D Body.png" alt="Sample 1 - SAM 3D Body" width="120"></td>
+</tr>
+<tr>
+<td align="center"><img src="assets/qualitative_comparisons/sample1/input_bbox.png" alt="Sample 1 Input" width="120"></td>
+<td align="center">-</td>
+<td align="center">-</td>
+<td align="center">-</td>
+<td align="center">-</td>
+</tr>
+<tr>
+<td align="center"><strong>Sample 2</strong></td>
+<td align="center"><img src="assets/qualitative_comparisons/sample2/camerahmr.png" alt="Sample 2 - CameraHMR" width="120"></td>
+<td align="center"><img src="assets/qualitative_comparisons/sample2/nlf.png" alt="Sample 2 - NLF" width="120"></td>
+<td align="center"><img src="assets/qualitative_comparisons/sample2/4dhumans.png" alt="Sample 2 - 4DHumans (HMR2.0b)" width="120"></td>
+<td align="center"><img src="assets/qualitative_comparisons/sample2/SAM 3D Body.png" alt="Sample 2 - SAM 3D Body" width="120"></td>
+</tr>
+<tr>
+<td align="center"><img src="assets/qualitative_comparisons/sample2/input_bbox.png" alt="Sample 2 Input" width="120"></td>
+<td align="center">-</td>
+<td align="center">-</td>
+<td align="center">-</td>
+<td align="center">-</td>
+</tr>
+<tr>
+<td align="center"><strong>Sample 3</strong></td>
+<td align="center"><img src="assets/qualitative_comparisons/sample3/camerahmr.png" alt="Sample 3 - CameraHMR" width="120"></td>
+<td align="center"><img src="assets/qualitative_comparisons/sample3/nlf.png" alt="Sample 3 - NLF" width="120"></td>
+<td align="center"><img src="assets/qualitative_comparisons/sample3/4dhumans.png" alt="Sample 3 - 4DHumans (HMR2.0b)" width="120"></td>
+<td align="center"><img src="assets/qualitative_comparisons/sample3/SAM 3D Body.png" alt="Sample 3 - SAM 3D Body" width="120"></td>
+</tr>
+<tr>
+<td align="center"><img src="assets/qualitative_comparisons/sample3/input_bbox.png" alt="Sample 3 Input" width="120"></td>
+<td align="center">-</td>
+<td align="center">-</td>
+<td align="center">-</td>
+<td align="center">-</td>
+</tr>
+<tr>
+<td align="center"><strong>Sample 4</strong></td>
+<td align="center"><img src="assets/qualitative_comparisons/sample4/camerahmr.png" alt="Sample 4 - CameraHMR" width="120"></td>
+<td align="center"><img src="assets/qualitative_comparisons/sample4/nlf.png" alt="Sample 4 - NLF" width="120"></td>
+<td align="center"><img src="assets/qualitative_comparisons/sample4/4dhumans.png" alt="Sample 4 - 4DHumans (HMR2.0b)" width="120"></td>
+<td align="center"><img src="assets/qualitative_comparisons/sample4/SAM 3D Body.png" alt="Sample 4 - SAM 3D Body" width="120"></td>
+</tr>
+<tr>
+<td align="center"><img src="assets/qualitative_comparisons/sample4/input_bbox.png" alt="Sample 4 Input" width="120"></td>
+<td align="center">-</td>
+<td align="center">-</td>
+<td align="center">-</td>
+<td align="center">-</td>
+</tr>
+</tbody>
+</table>
+
+*Our method demonstrates superior reconstruction quality with more accurate pose estimation, better shape recovery, and improved handling of occlusions and challenging viewpoints compared to existing approaches.*
 
 ## Latest updates
 
