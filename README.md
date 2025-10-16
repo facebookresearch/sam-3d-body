@@ -1,14 +1,66 @@
-# SAM 3D: Segment Anything 
+# SAM 3D Body: Single Image Human Mesh Recovery 
 
 **[AI at Meta, FAIR](https://ai.meta.com/research/)**
 
-< Authors go here >
+[Xitong Yang](https://scholar.google.com/citations?user=k0qC-7AAAAAJ&hl=en)\*, [Devansh Kukreja](https://www.linkedin.com/in/devanshkukreja)\*, [Don Pinkus](https://www.linkedin.com/in/don-pinkus-9140702a)\*, [Taosha Fan](https://scholar.google.com/citations?user=3PJeg1wAAAAJ&hl=en), [David Park](https://jindapark.github.io/), [Soyong Shin](https://yohanshin.github.io/), [Jinkun Cao](https://www.jinkuncao.com/), [Jiawei Liu](https://jia-wei-liu.github.io/), [Nicolas Ugrinovic](https://www.iri.upc.edu/people/nugrinovic/), [Anushka Sagar](https://www.linkedin.com/in/anushkasagar)†, [Jitendra Malik](https://people.eecs.berkeley.edu/~malik/)†, [Piotr Dollar](https://pdollar.github.io/)†, [Kris Kitani](https://kriskitani.github.io/)†
+
+*Core contributors, †Project leads
 
 [[`<REPLACE ME Paper>`](https://ai.meta.com/research/publications/sam-2-segment-anything-in-images-and-videos/)] [[`<REPLACE ME Project>`](https://ai.meta.com/sam2)] [[`<REPLACE ME Demo>`](https://sam2.metademolab.com/)] [[`<REPLACE ME Dataset>`](https://ai.meta.com/datasets/segment-anything-video)] [[`<REPLACE ME Blog>`](https://ai.meta.com/blog/segment-anything-2)] [[`<REPLACE ME BibTeX>`](#citing-sam-2)]
 
-< Architecture Diagram goes here >
+![SAM 3D Body Model Architecture](assets/model_diagram.png?raw=true)
 
-**Segment Anything 3D Models (SAM 3D)** is a pair of foundation models towards solving 3D perception from monocular views. < MORE DETAILS HERE>
+**SAM 3D Body (3DB)** is a promptable foundation model for single-image 3D human mesh recovery (HMR). Our method emphasizes data quality and diversity to maximize performance, addressing key problems with noisy pseudo-ground-truth meshes commonly used in public datasets. We introduce the XR Body model (XRB), a new parametric mesh representation that decouples skeletal pose and body shape for improved accuracy and interpretability.
+
+3DB employs an encoder-decoder architecture and supports auxiliary prompts, including 2D keypoints and masks, enabling user-guided inference similar to the SAM family of models. We derive high-quality annotations from a multi-stage annotation pipeline using differentiable optimization, multi-view geometry, dense keypoint detection, and a data engine to collect and annotated data covering both common and rare poses across a wide range of viewpoints. Our experiments demonstrate substantial improvements over prior methods, with robust performance on challenging scenarios such as occlusions and rare poses.
+
+## Visual Comparisons
+
+Our SAM 3D Body method shows significant improvements over existing approaches across diverse scenarios:
+
+<table>
+<thead>
+<tr>
+<th align="center">Input</th>
+<th align="center">CameraHMR</th>
+<th align="center">NLF</th>
+<th align="center">4DHumans (HMR2.0b)</th>
+<th align="center"><strong>SAM 3D Body (Ours)</strong></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td align="center"><img src="assets/qualitative_comparisons/sample1/input_bbox.png" alt="Sample 1 Input" width="120"></td>
+<td align="center"><img src="assets/qualitative_comparisons/sample1/camerahmr.png" alt="Sample 1 - CameraHMR" width="120"></td>
+<td align="center"><img src="assets/qualitative_comparisons/sample1/nlf.png" alt="Sample 1 - NLF" width="120"></td>
+<td align="center"><img src="assets/qualitative_comparisons/sample1/4dhumans.png" alt="Sample 1 - 4DHumans (HMR2.0b)" width="120"></td>
+<td align="center"><img src="assets/qualitative_comparisons/sample1/SAM 3D Body.png" alt="Sample 1 - SAM 3D Body" width="120"></td>
+</tr>
+<tr>
+<td align="center"><img src="assets/qualitative_comparisons/sample2/input_bbox.png" alt="Sample 2 Input" width="120"></td>
+<td align="center"><img src="assets/qualitative_comparisons/sample2/camerahmr.png" alt="Sample 2 - CameraHMR" width="120"></td>
+<td align="center"><img src="assets/qualitative_comparisons/sample2/nlf.png" alt="Sample 2 - NLF" width="120"></td>
+<td align="center"><img src="assets/qualitative_comparisons/sample2/4dhumans.png" alt="Sample 2 - 4DHumans (HMR2.0b)" width="120"></td>
+<td align="center"><img src="assets/qualitative_comparisons/sample2/SAM 3D Body.png" alt="Sample 2 - SAM 3D Body" width="120"></td>
+</tr>
+<tr>
+<td align="center"><img src="assets/qualitative_comparisons/sample3/input_bbox.png" alt="Sample 3 Input" width="120"></td>
+<td align="center"><img src="assets/qualitative_comparisons/sample3/camerahmr.png" alt="Sample 3 - CameraHMR" width="120"></td>
+<td align="center"><img src="assets/qualitative_comparisons/sample3/nlf.png" alt="Sample 3 - NLF" width="120"></td>
+<td align="center"><img src="assets/qualitative_comparisons/sample3/4dhumans.png" alt="Sample 3 - 4DHumans (HMR2.0b)" width="120"></td>
+<td align="center"><img src="assets/qualitative_comparisons/sample3/SAM 3D Body.png" alt="Sample 3 - SAM 3D Body" width="120"></td>
+</tr>
+<tr>
+<td align="center"><img src="assets/qualitative_comparisons/sample4/input_bbox.png" alt="Sample 4 Input" width="120"></td>
+<td align="center"><img src="assets/qualitative_comparisons/sample4/camerahmr.png" alt="Sample 4 - CameraHMR" width="120"></td>
+<td align="center"><img src="assets/qualitative_comparisons/sample4/nlf.png" alt="Sample 4 - NLF" width="120"></td>
+<td align="center"><img src="assets/qualitative_comparisons/sample4/4dhumans.png" alt="Sample 4 - 4DHumans (HMR2.0b)" width="120"></td>
+<td align="center"><img src="assets/qualitative_comparisons/sample4/SAM 3D Body.png" alt="Sample 4 - SAM 3D Body" width="120"></td>
+</tr>
+</tbody>
+</table>
+
+*Our method demonstrates superior reconstruction quality with more accurate pose estimation, better shape recovery, and improved handling of occlusions and challenging viewpoints compared to existing approaches.*
 
 ## Latest updates
 
@@ -25,7 +77,18 @@
 
 First, we need to download a model checkpoint. All the model checkpoints can be downloaded by running:
 
-< DOWNLOAD CLI INSTRUCTIONS HERE >
+```bash
+cd checkpoints && \
+./download_ckpts.sh && \
+cd ..
+```
+
+or individually from:
+
+- [sam3d_hiera_tiny.pt](https://huggingface.co/facebook/sam3d-hiera-tiny) (placeholder link - to be updated)
+- [sam3d_hiera_small.pt](https://huggingface.co/facebook/sam3d-hiera-small) (placeholder link - to be updated)  
+- [sam3d_hiera_base_plus.pt](https://huggingface.co/facebook/sam3d-hiera-base-plus) (placeholder link - to be updated)
+- [sam3d_hiera_large.pt](https://huggingface.co/facebook/sam3d-hiera-large) (placeholder link - to be updated)
 
 Then SAM 3D can be used in a few lines as follows for image prediction.
 
@@ -45,11 +108,20 @@ Then SAM 3D can be used in a few lines as follows for image prediction.
 
 ## Load from 🤗 Hugging Face
 
-Alternatively, models can also be loaded from [Hugging Face](https://huggingface.co/models?search=facebook/sam2) (requires `pip install huggingface_hub`).
+Alternatively, models can also be loaded from [Hugging Face](https://huggingface.co/models?search=facebook/sam3d) (requires `pip install huggingface_hub`).
 
 For image prediction:
 
-< Code sample to load and run inference with huggingface >
+```python
+import torch
+from sam3d.sam3d_image_predictor import SAM3DImagePredictor
+
+predictor = SAM3DImagePredictor.from_pretrained("facebook/sam3d-hiera-large")
+
+with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
+    predictor.set_image(<your_image>)
+    poses, meshes = predictor.predict(<input_prompts>)
+```
 
 ## Model Description
 
@@ -57,10 +129,12 @@ For image prediction:
 
 The table below shows the SAM 3D checkpoints released on September 23, 2025.
 
-< Table with model, size, speed, and MPJPE >
-
-|      **Model**       | **Size (M)** |    **Speed (FPS)**     | **<Dataset> test (PCK @ 0.05)** | **<Dataset> test (MPJPE)** |
+|      **Model**       | **Size (M)** |    **Speed (FPS)**     | **H36M test (MPJPE)** | **3DPW test (MPJPE)** |
 | :------------------: | :----------: | :--------------------: | :-----------------: | :----------------: |
+|   sam3d_hiera_tiny <br /> ([config](configs/sam3d/sam3d_hiera_t.yaml), [checkpoint](https://huggingface.co/facebook/sam3d-hiera-tiny))    |     TBD     |          TBD          |        TBD         |        TBD        |
+|   sam3d_hiera_small <br /> ([config](configs/sam3d/sam3d_hiera_s.yaml), [checkpoint](https://huggingface.co/facebook/sam3d-hiera-small))   |      TBD      |          TBD          |        TBD         |        TBD        |
+| sam3d_hiera_base_plus <br /> ([config](configs/sam3d/sam3d_hiera_b+.yaml), [checkpoint](https://huggingface.co/facebook/sam3d-hiera-base-plus)) |     TBD     |        TBD          |        TBD         |        TBD        |
+|   sam3d_hiera_large <br /> ([config](configs/sam3d/sam3d_hiera_l.yaml), [checkpoint](https://huggingface.co/facebook/sam3d-hiera-large))   |    TBD     |          TBD          |        TBD         |        TBD        |
 
 
 < TODO: Update when we run speedtests >
@@ -82,24 +156,27 @@ You can train or fine-tune SAM 3D on custom datasets of images, videos, or both.
 
 ## License
 
-< TODO: Add License Type once it's decided >
+The SAM 3D Body model checkpoints and code are licensed under [Apache 2.0](./LICENSE).
 
 ## Contributing
-
-< TODO: Add contributing.md and code_of_conduct.md >
 
 See [contributing](CONTRIBUTING.md) and the [code of conduct](CODE_OF_CONDUCT.md).
 
 ## Contributors
 
-The SAM 3D project was made possible with the help of many contributors (alphabetical):
+The SAM 3D Body project was made possible with the help of many contributors (alphabetical):
 
-< List of collaborators here >
+Third-party code: we acknowledge the use of open-source libraries and frameworks that made this work possible.
 
-Third-party code: < Credit third party code here >
+## Citing SAM 3D Body
 
-## Citing SAM 3D
+If you use SAM 3D Body or the SAM 3D Body dataset in your research, please use the following BibTeX entry.
 
-If you use SAM 3D or the SAM3D dataset in your research, please use the following BibTeX entry.
-
-< TODO: Add bibtex here >
+```bibtex
+@article{yang2025sam3dbody,
+  title={SAM 3D Body: Single Image Human Mesh Recovery},
+  author={Yang, Xitong and Kukreja, Devansh and Pinkus, Don and Fan, Taosha and Park, David and Shin, Soyong and Cao, Jinkun and Liu, Jiawei and Ugrinovic, Nicolas and Sagar, Anushka and Malik, Jitendra and Dollar, Piotr and Kitani, Kris},
+  journal={arXiv preprint arXiv:XXXX.XXXXX},
+  year={2025}
+}
+```

@@ -178,7 +178,6 @@ dmypy.json
 
 
 # ignore saved figures
-*.png
 *.jpg
 training/wandb
 training/data_preprocessing/atlas46_250610*
