@@ -67,13 +67,13 @@ Our SAM 3D Body method shows significant improvements over existing approaches a
 **10/20/2025 -- Checkpoints Launched, Dataset Released, Web Demo and Paper are out**
 - < MORE DETAILS HERE >
 
-## Installation
+## Installation [TODO: Update this]
 
 < INSTALLATION INSTRUCTIONS HERE >
 
 ## Getting Started [TODO: Update this]
 
-### Download Checkpoints
+### Download Checkpoints [TODO: Update this]
 
 First, we need to download a model checkpoint. All the model checkpoints can be downloaded by running:
 
@@ -92,7 +92,7 @@ or individually from:
 
 Then SAM 3D Body can be used in a few lines as follows for image prediction.
 
-### Image prediction
+### Image prediction [TODO: Update this]
 
 < MODELS DESCRIPTION HERE >
 
@@ -100,13 +100,13 @@ Then SAM 3D Body can be used in a few lines as follows for image prediction.
 
 < Link to Colab Notebook >
 
-### Video prediction
+### Video prediction [TODO: Update this]
 
 < Optional: Do we want to add tooling to run inference on videos? >
 
 < Link to Colab Notebook >
 
-## Load from 🤗 Hugging Face
+## Load from 🤗 Hugging Face [TODO: Update this]
 
 Alternatively, models can also be loaded from [Hugging Face](https://huggingface.co/models?search=facebook/sam3d) (requires `pip install huggingface_hub`).
 
@@ -123,9 +123,9 @@ with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
     poses, meshes = predictor.predict(<input_prompts>)
 ```
 
-## Model Description
+## Model Description [TODO: Update this]
 
-### SAM 3D Body checkpoints
+### SAM 3D Body checkpoints [TODO: Update this]
 
 The table below shows the SAM 3D Body checkpoints released on [TODO: Update this].
 
@@ -164,11 +164,12 @@ See [contributing](CONTRIBUTING.md) and the [code of conduct](CODE_OF_CONDUCT.md
 
 ## Contributors
 
-The SAM 3D Body project was made possible with the help of many contributors (alphabetical):
+The SAM 3D Body project was made possible with the help of many contributors:
+Vivian Lee, George Orlin, Matt Feiszli, Nikhila Ravi, Andrew Westbury, Jyun-Ting Song, Zejia Weng, Xizi Zhang, Yuting Ye, Federica Bogo, Ronald Mallet, Ahmed Osman, Rawal Khirodkar, Javier Romero, Carsten Stoll, Juan Carlos Guzman, Sofien Bouaziz, Yuan Dong, Su Zhaoen, Fabian Prada, Alexander Richard, Michael Zollhoefer, Roman Rädle, Sasha Mitts, Michelle Chan, Yael Yungster, Azita Shokrpour, Helen Klein, Mallika Malhotra, Ida Cheng, Eva Galper.
 
-Third-party code: we acknowledge the use of open-source libraries and frameworks that made this work possible.
+Third-party code: [TODO: Update this]
 
-## Citing SAM 3D Body
+## Citing SAM 3D Body [TODO: Update this]
 
 If you use SAM 3D Body or the SAM 3D Body dataset in your research, please use the following BibTeX entry.
 
