@@ -4,7 +4,9 @@ from typing import Callable, Dict, Optional, Tuple, Union
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 import cv2
+import roma
 
 from detectron2.checkpoint import DetectionCheckpointer
 from detectron2.config import instantiate, LazyConfig
@@ -87,8 +89,29 @@ def denormalize_f(norm_K, height, width):
     ])
     return abs_K
 
+def rotation_angle_difference(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
+    """
+    Compute the angle difference (magnitude) between two batches of SO(3) rotation matrices.
+    Args:
+        A: Tensor of shape (*, 3, 3), batch of rotation matrices.
+        B: Tensor of shape (*, 3, 3), batch of rotation matrices.
+    Returns:
+        Tensor of shape (*,), angle differences in radians.
+    """
+    # Compute relative rotation matrix
+    R_rel = torch.matmul(A, B.transpose(-2, -1))  # (B, 3, 3)
+    # Compute trace of relative rotation
+    trace = R_rel[..., 0, 0] + R_rel[..., 1, 1] + R_rel[..., 2, 2]  # (B,)
+    # Compute angle using the trace formula
+    cos_theta = (trace - 1) / 2
+    # Clamp for numerical stability
+    cos_theta_clamped = torch.clamp(cos_theta, -1.0, 1.0)
+    # Compute angle difference
+    angle = torch.acos(cos_theta_clamped)
+    return angle
 
-class SAM3DBodyEstimator:
+
+class SAM3DBodyEstimatorHand:
     def __init__(
         self,
         checkpoint_path: str = "",
@@ -102,11 +125,15 @@ class SAM3DBodyEstimator:
         just_left_hand = False,
         use_face = False,
         moge_path: str = "",
+        hand_crop_factor: float = 0.9,
+        thresh_wrist_angle: float = 1.1
     ):
         self.device = (torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'))
         self.use_mask = use_mask
         self.scale_factor = scale_factor
         self.just_left_hand = just_left_hand
+        self.hand_crop_factor = hand_crop_factor
+        self.thresh_wrist_angle = thresh_wrist_angle
 
         # Initialize human detector
         self.use_detector = False
@@ -133,6 +160,7 @@ class SAM3DBodyEstimator:
         else:
             self.fov_estimator = None
             print("No FOV estimator... Using the default FOV!")
+        self._blank_hand_embeddings = None
 
     def init_detector(self, detector_path, threshold):
         DETECTRON_CFG = os.path.join(detector_path, "cascade_mask_rcnn_vitdet_h_75ep.py")
@@ -223,7 +251,94 @@ class SAM3DBodyEstimator:
             all_scores = np.stack(all_scores)
         
         return all_masks, all_scores
+    
+    def _prepare_batch(
+        self,
+        img,
+        transform,
+        boxes,
+        masks=None,
+        masks_score=None,
+        cam_int=None,
+        get_full=False,
+    ):
+        height, width = img.shape[:2]
 
+        # construct batch data samples
+        data_list = []
+        for idx in range(boxes.shape[0]):
+            data_info = dict(img=img)
+            data_info["bbox"] = boxes[idx]  # shape (4,)
+            data_info["bbox_format"] = "xyxy"
+
+            if masks is not None:
+                data_info["mask"] = masks[idx].copy()
+                if masks_score is not None:
+                    data_info["mask_score"] = masks_score[idx]
+                else:
+                    data_info["mask_score"] = np.array(1.0, dtype=np.float32)
+            else:
+                data_info["mask"] = np.zeros((height, width, 1), dtype=np.uint8)
+                data_info["mask_score"] = np.array(0.0, dtype=np.float32)
+
+            data_list.append(transform(data_info))
+
+        batch = default_collate(data_list)
+
+        if get_full:
+            ############# Convert to full-image format #################
+            full_size = 256
+            _, img_full, center_full, scale_full = resize_image(
+                img,
+                full_size,
+                batch["bbox_center"],
+                batch["bbox_scale"],
+            )
+            bbox_min = center_full - scale_full * 0.5  # pyre-ignore
+            bbox_max = center_full + scale_full * 0.5  # pyre-ignore
+            bbox_full = np.concatenate([bbox_min, bbox_max], axis=1)
+            bbox_full = np.clip(bbox_full, 0, full_size)
+
+            batch_full = dict(
+                img_full=to_tensor(img_full),
+                full_bbox_center=center_full,
+                full_bbox_scale=scale_full,
+                full_bbox=bbox_full,
+            )
+            batch_full = default_collate([batch_full])
+            batch.update(batch_full)
+
+        max_num_person = batch["img"].shape[0]
+        for key in [
+            "img",
+            "img_size",
+            "ori_img_size",
+            "bbox_center",
+            "bbox_scale",
+            "bbox",
+            "affine_trans",
+            "mask",
+            "mask_score",
+        ]:
+            if key in batch:
+                batch[key] = batch[key].unsqueeze(0).float()
+        if "mask" in batch:
+            batch["mask"] = batch["mask"].unsqueeze(2)
+        batch["person_valid"] = torch.ones((1, max_num_person))
+
+        if cam_int is not None:
+            batch["cam_int"] = cam_int.to(batch["img"])
+        else:
+            batch["cam_int"] = torch.tensor(
+                [[[(height ** 2 + width ** 2) ** 0.5, 0, width / 2.],
+                [0, (height ** 2 + width ** 2) ** 0.5, height / 2.],
+                [0, 0, 1]]],
+            ).to(batch["img"])
+        
+        batch['img_ori'] = [NoCollate(img)]
+        return batch
+
+    @torch.no_grad()
     def process_one_image(
         self,
         img: Union[str, np.ndarray],
@@ -282,9 +397,9 @@ class SAM3DBodyEstimator:
         # Get SAM2 mask if needed
         masks, masks_score = None, None
         if self.use_mask:
-            masks, scores = self.run_sam(img, boxes)
+            masks, score = self.run_sam(img, boxes)
             # Stress test demo --> use the same bbox for all instances
-            boxes = np.concatenate([boxes[:, :2].min(axis=0), boxes[:, 2:].max(axis=0)], axis=0)[None, :].repeat(boxes.shape[0], axis=0)
+            # boxes = np.concatenate([boxes[:, :2].min(axis=0), boxes[:, 2:].max(axis=0)], axis=0)[None, :].repeat(boxes.shape[0], axis=0)
     
         #################### Run model inference on an image ####################
 
@@ -295,129 +410,184 @@ class SAM3DBodyEstimator:
                 VisionTransformWrapper(ToTensor()),
             ]
         )
+
         transform_hand = Compose(
             [
-                GetBBoxCenterScale(),
+                GetBBoxCenterScale(padding=self.hand_crop_factor),
                 TopdownAffine(input_size=self.cfg.MODEL.IMAGE_SIZE, use_udp=False),
                 VisionTransformWrapper(ToTensor()),
             ]
         )
-        # construct batch data samples
-        data_list = []
-        for idx in range(boxes.shape[0]):
-            data_info = dict(img=img)
-            data_info["bbox"] = boxes[idx]  # shape (4,)
-            data_info["bbox_format"] = "xyxy"
 
-            if masks is not None:
-                data_info["mask"] = masks[idx].copy()
-                if masks_score is not None:
-                    data_info["mask_score"] = masks_score[idx]
-                else:
-                    data_info["mask_score"] = np.array(1.0, dtype=np.float32)
-            else:
-                data_info["mask"] = np.zeros((height, width, 1), dtype=np.uint8)
-                data_info["mask_score"] = np.array(0.0, dtype=np.float32)
-
-            data_list.append(transform(data_info))
-
-        batch = default_collate(data_list)
-
-        ############# Convert to full-image format #################
-        full_size = 256
-        _, img_full, center_full, scale_full = resize_image(
-            img,
-            full_size,
-            batch["bbox_center"],
-            batch["bbox_scale"],
-        )
-        bbox_min = center_full - scale_full * 0.5  # pyre-ignore
-        bbox_max = center_full + scale_full * 0.5  # pyre-ignore
-        bbox_full = np.concatenate([bbox_min, bbox_max], axis=1)
-        bbox_full = np.clip(bbox_full, 0, full_size)
-
-        batch_full = dict(
-            img_full=to_tensor(img_full),
-            full_bbox_center=center_full,
-            full_bbox_scale=scale_full,
-            full_bbox=bbox_full,
-        )
-        batch_full = default_collate([batch_full])
-        batch.update(batch_full)
-
-        max_num_person = batch["img"].shape[0]
-        for key in [
-            "img",
-            "img_size",
-            "ori_img_size",
-            "bbox_center",
-            "bbox_scale",
-            "bbox",
-            "affine_trans",
-            "mask",
-            "mask_score",
-        ]:
-            batch[key] = batch[key].unsqueeze(0).float()
-        batch["mask"] = batch["mask"].unsqueeze(2)
-        batch["person_valid"] = torch.ones((1, max_num_person))
-
-        # Set default camera intrinsics
-        batch["cam_int"] = torch.tensor(
-            [[[(height ** 2 + width ** 2) ** 0.5, 0, width / 2.],
-            [0, (height ** 2 + width ** 2) ** 0.5, height / 2.],
-            [0, 0, 1]]],
-        ).to(batch["img"])
-
-        #############################################################
-
+        batch = self._prepare_batch(img, transform, boxes, masks, masks_score)
         if self.cfg.MODEL.NAME == "promptable_threepo_triplet":
             batch['lhand_img'] = torch.zeros_like(batch['img'][:, :, :, :self.cfg.MODEL.HAND_IMAGE_SIZE[0], :self.cfg.MODEL.HAND_IMAGE_SIZE[1]])
             batch['rhand_img'] = torch.zeros_like(batch['img'][:, :, :, :self.cfg.MODEL.HAND_IMAGE_SIZE[0], :self.cfg.MODEL.HAND_IMAGE_SIZE[1]])
-            batch['img_ori'] = [NoCollate(img)]
 
         batch = recursive_to(batch, "cuda")
-        if self.cfg.MODEL.NAME == "promptable_threepo":
-            self.model._initialize_batch(batch)
-            with torch.no_grad():
-                # batch["cam_int"] = get_cam_intrinsics(self.camerahmr, batch).to(
-                #     batch["img"]
-                # )
-
-                pose_output, full_output = self.model.forward_step(batch)
-        else:
-            # triplet
-            assert self.model.use_twostage_for_hands
-            self.model._initialize_batch(batch)
-            with torch.no_grad():
-                if self.fov_estimator is not None:
-                    batch["cam_int"] = get_cam_intrinsics(self.fov_estimator, batch).to(
-                        batch["img"]
-                    )
-
-                pose_output_ab, full_output_ab = self.model.forward_step(batch)
-                if self.just_left_hand:
-                    print("Hack to only use left hand")
-                    batch['left_center'] = batch["bbox_center"].cpu().numpy().squeeze(0)
-                    batch['left_scale'] = batch["bbox_scale"].cpu().numpy().squeeze(0)
-                    batch['right_center'] = np.array([[0, 0]], dtype=np.float32)
-                    batch['right_scale'] = np.array([[0.5, 0.5]], dtype=np.float32)
-                    updated_batch = self.model.get_hand_box(pose_output_ab, batch, scale_factor=self.scale_factor)
-                    updated_batch['rhand_img'][...] = 0
-                else:
-                    updated_batch = self.model.get_hand_box(pose_output_ab, batch, scale_factor=self.scale_factor)
-                pose_output, full_output = self.model.forward_step(updated_batch, return_feature_only=False)
+        # triplet-triplet inference
+        assert self.model.use_twostage_for_hands
+        self.model._initialize_batch(batch)
 
 
-        # Cache information for future prompting
-        self.batch = copy.deepcopy(batch)
-        self.pose_output = copy.deepcopy(pose_output)
-        self.full_output = copy.deepcopy(full_output)
+        cam_int = get_cam_intrinsics(self.fov_estimator, batch).to(
+            batch["img"]
+        )
+        batch["cam_int"] = cam_int.clone()
+
+        ## Stage 1: Body + blank hands
+        hand_embeddings = (
+            None
+            if self._blank_hand_embeddings is None
+            else self._blank_hand_embeddings.repeat(batch["img"].shape[0], 1, 1, 1)
+        )
+        pose_output_ab = self.model.inference_pose_branch(
+            batch,
+            image_embeddings=None,
+            hand_embeddings=hand_embeddings,
+        )
+        lhand_blank_embeddings, rhand_blank_embeddings = torch.chunk(pose_output_ab["hand_embeddings"], 2, dim=2)
+
+        ## Stage 2: Body + hand crops
+        updated_batch = self.model.get_hand_box(pose_output_ab, batch, scale_factor=self.scale_factor)
+        pose_output = self.model.inference_pose_branch(
+            updated_batch,
+            image_embeddings=pose_output_ab["image_embeddings"],
+            hand_embeddings=None,
+        )
+        lhand_embeddings, rhand_embeddings = torch.chunk(pose_output["hand_embeddings"], 2, dim=2)
+        ori_local_wrist_rotmat = roma.euler_to_rotmat(
+            "XZY",
+            pose_output['atlas']['body_pose'][:, [41, 43, 42, 31, 33, 32]].unflatten(1, (2, 3))
+        )
+
+        # Stage 3: Re-run with each hand
+        ## Left...
+        left_xyxy = np.concatenate([
+            (updated_batch['left_center'][:, 0] - updated_batch['left_scale'][:, 0] / 2).reshape(-1, 1),
+            (updated_batch['left_center'][:, 1] - updated_batch['left_scale'][:, 1] / 2).reshape(-1, 1),
+            (updated_batch['left_center'][:, 0] + updated_batch['left_scale'][:, 0] / 2).reshape(-1, 1),
+            (updated_batch['left_center'][:, 1] + updated_batch['left_scale'][:, 1] / 2).reshape(-1, 1),
+        ], axis=1)
+        print("Body, going into left...", left_xyxy)
+
+        batch_lhand = self._prepare_batch(img, transform_hand, left_xyxy, cam_int=cam_int.clone())
+        batch_lhand = recursive_to(batch_lhand, "cuda")
+        lhand_output = self.model.inference_pose_branch(
+            batch_lhand,
+            image_embeddings=None,
+            hand_embeddings=torch.cat([lhand_embeddings, rhand_blank_embeddings], dim=2),
+        )
+    
+        ## Right...
+        right_xyxy = np.concatenate([
+            (updated_batch['right_center'][:, 0] - updated_batch['right_scale'][:, 0] / 2).reshape(-1, 1),
+            (updated_batch['right_center'][:, 1] - updated_batch['right_scale'][:, 1] / 2).reshape(-1, 1),
+            (updated_batch['right_center'][:, 0] + updated_batch['right_scale'][:, 0] / 2).reshape(-1, 1),
+            (updated_batch['right_center'][:, 1] + updated_batch['right_scale'][:, 1] / 2).reshape(-1, 1),
+        ], axis=1)
+        print("Body, going into right...", right_xyxy)
+
+        batch_rhand = self._prepare_batch(img, transform_hand, right_xyxy, cam_int=cam_int.clone())
+        batch_rhand = recursive_to(batch_rhand, "cuda")
+        rhand_output = self.model.inference_pose_branch(
+            batch_rhand,
+            image_embeddings=None,
+            hand_embeddings=torch.cat([lhand_blank_embeddings, rhand_embeddings], dim=2),
+        )
+
+        # Drop in hand pose
+        left_hand_pose_params = lhand_output['atlas']['hand'][:, :54]
+        right_hand_pose_params = rhand_output['atlas']['hand'][:, 54:]
+        updated_hand_pose = torch.cat([left_hand_pose_params, right_hand_pose_params], dim=1)
+            
+        # Drop in hand scales
+        updated_scale = pose_output['atlas']['scale'].clone()
+        updated_scale[:, 9] = lhand_output['atlas']['scale'][:, 9]
+        updated_scale[:, 8] = rhand_output['atlas']['scale'][:, 8]
+            
+        print("Doing IK...")
+        # First, forward just FK
+        joint_rotations = self.model.head_pose.atlas(
+            global_trans=pose_output['atlas']['global_rot'] * 0,
+            global_rot=pose_output['atlas']['global_rot'],
+            body_pose_params=pose_output['atlas']['body_pose'],
+            hand_pose_params=updated_hand_pose,
+            scale_params=updated_scale,
+            shape_params=pose_output['atlas']['shape'],
+            expr_params=pose_output['atlas']['face'],
+            return_joint_rotations=True,
+        )[1]
+
+        # Get lowarm
+        lowarm_joint_idxs = torch.LongTensor([76, 40]).cuda() # left, right
+        lowarm_joint_rotations = joint_rotations[:, lowarm_joint_idxs] # B x 2 x 3 x 3
+        
+        # Get zero-wrist pose
+        wrist_twist_joint_idxs = torch.LongTensor([77, 41]).cuda() # left, right
+        wrist_zero_rot_pose = lowarm_joint_rotations @ self.model.head_pose.atlas.lbs_fn_infos.joint_rotation[wrist_twist_joint_idxs]
+        
+        # Get globals from left & right
+        left_joint_global_rots = lhand_output['atlas']['joint_global_rots']
+        right_joint_global_rots = rhand_output['atlas']['joint_global_rots']
+        pred_global_wrist_rotmat = torch.stack([
+            left_joint_global_rots[:, 78],
+            right_joint_global_rots[:, 42],
+        ], dim=1)
+
+        # Now we want to get the local poses that lead to the wrist being pred_global_wrist_rotmat
+        fused_local_wrist_rotmat = torch.einsum('kabc,kabd->kadc', pred_global_wrist_rotmat, wrist_zero_rot_pose)
+        wrist_xzy = roma.rotmat_to_euler("XZY", fused_local_wrist_rotmat)
+        
+        # Put it in.
+        angle_difference = rotation_angle_difference(ori_local_wrist_rotmat, fused_local_wrist_rotmat) # B x 2 x 3 x3
+        valid_angle = angle_difference < self.thresh_wrist_angle
+        valid_angle = valid_angle.unsqueeze(-1)
+
+        body_pose = pose_output['atlas']['body_pose'][:, [41, 43, 42, 31, 33, 32]].unflatten(1, (2, 3))
+        updated_body_pose = torch.where(valid_angle, wrist_xzy, body_pose)
+        pose_output['atlas']['body_pose'][:, [41, 43, 42, 31, 33, 32]] = updated_body_pose.flatten(1, 2)
+
+        hand_pose = pose_output['atlas']['hand'].unflatten(1, (2, 54))
+        pose_output['atlas']['hand'] = torch.where(valid_angle, updated_hand_pose.unflatten(1, (2, 54)), hand_pose).flatten(1, 2)
+
+        hand_scale = torch.stack([pose_output['atlas']['scale'][:, 9], pose_output['atlas']['scale'][:, 8]], dim=1)
+        updated_hand_scale = torch.stack([updated_scale[:, 9], updated_scale[:, 8]], dim=1)
+        masked_hand_scale = torch.where(valid_angle.squeeze(-1), updated_hand_scale, hand_scale)
+        pose_output['atlas']['scale'][:, 9] = masked_hand_scale[:, 0]
+        pose_output['atlas']['scale'][:, 8] = masked_hand_scale[:, 1]
+        
+        print("Done with IK...")
+            
+        # Re-run forward
+        with torch.no_grad():
+            verts, j3d, jcoords, joint_global_rots, joint_params = self.model.head_pose.atlas(
+                global_trans=pose_output['atlas']['global_rot'] * 0,
+                global_rot=pose_output['atlas']['global_rot'],
+                body_pose_params=pose_output['atlas']['body_pose'],
+                hand_pose_params=pose_output['atlas']['hand'],
+                scale_params=pose_output['atlas']['scale'],
+                shape_params=pose_output['atlas']['shape'],
+                expr_params=pose_output['atlas']['face'],
+                return_keypoints=True,
+                return_joint_coords=True,
+                return_joint_rotations=True,
+                return_joint_params=True,
+            )
+            j3d = j3d[:, :70]  # 308 --> 70 keypoints
+            verts[..., [1, 2]] *= -1  # Camera system difference
+            j3d[..., [1, 2]] *= -1  # Camera system difference
+            jcoords[..., [1, 2]] *= -1
+            pose_output['atlas']['pred_keypoints_3d'] = j3d
+            pose_output['atlas']['pred_vertices'] = verts
+            pose_output['atlas']['pred_joint_coords'] = jcoords
+            pose_output['atlas']['pred_pose_raw'][...] = 0
 
         out = pose_output["atlas"]
         out = recursive_to(out, "cpu")
         out = recursive_to(out, "numpy")
         all_out = []
-        for idx in range(max_num_person):
+        for idx in range(batch["img"].shape[1]):
             all_out.append(
                 {
                     "bbox": batch["bbox"][0, idx].cpu().numpy(),
@@ -435,6 +605,8 @@ class SAM3DBodyEstimator:
                     "expr_params": out["face"][idx],
                     "mask": masks[idx] if masks is not None else None,
                     "pred_joint_coords": out["pred_joint_coords"][idx],
+                    "pred_global_rots": out['joint_global_rots'][idx],
+                    "angle_diff": angle_difference[idx].cpu().numpy(),
                 }
             )
 

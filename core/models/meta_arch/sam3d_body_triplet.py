@@ -1347,3 +1347,173 @@ class SAM3DBodyTriplet(BaseModel):
         pose_output = self.forward_pose_branch(batch, full_output, return_feature_only=return_feature_only)
 
         return pose_output, full_output
+
+
+    def inference_pose_branch(
+        self,
+        batch: Dict,
+        full_output: Optional[Dict] = {},
+        image_embeddings: Optional[torch.Tensor] = None,
+        hand_embeddings: Optional[torch.Tensor] = None,
+    ) -> Dict:
+        """Run a forward pass for the crop-image (pose) branch."""
+        batch_size, num_person = batch["img"].shape[:2]
+
+        # Optionally get ray conditioining
+        if self.cfg.MODEL.get("RAY_CONDITION_TYPE", None) is not None:
+            ray_cond = self.get_ray_condition(
+                batch
+            )  # This is B x num_person x 2 x H x W
+            ray_cond = self._flatten_person(ray_cond)
+            if self.cfg.MODEL.BACKBONE.TYPE in [
+                "vit_hmr",
+                "vit_hmr_triplet",
+                "hmr2",
+                "vit",
+                "vit_b",
+                "vit_l",
+            ]:
+                ray_cond = ray_cond[:, :, :, 32:-32]
+            elif self.cfg.MODEL.BACKBONE.TYPE in [
+                "vit_hmr_512_384",
+                "vit_hmr_triplet_512_384",
+                "vit_l_triplet_512_384",
+            ]:
+                ray_cond = ray_cond[:, :, :, 64:-64]
+
+            if self.cfg.MODEL.RAY_CONDITION_TYPE == "backbone_v1":
+                # Basically, have a zero conv patch embedding, then put into the backbone.
+                ray_cond = self.ray_cond_emb(ray_cond)
+            elif self.cfg.MODEL.RAY_CONDITION_TYPE in ["decoder_v1", "decoder_v2"]:
+                batch["ray_cond"] = self.ray_cond_emb(ray_cond)
+                ray_cond = None
+            else:
+                raise Exception
+        else:
+            ray_cond = None
+
+
+        if image_embeddings is None:
+            # Forward backbone encoder
+            x = self.data_preprocess(
+                self._flatten_person(batch["img"]),
+                crop_width=(
+                    self.cfg.MODEL.BACKBONE.TYPE
+                    in [
+                        "vit_hmr",
+                        "hmr2",
+                        "vit",
+                        "vit_b",
+                        "vit_l",
+                        "vit_hmr_512_384",
+                        "vit_hmr_triplet",
+                        "vit_hmr_triplet_512_384",
+                        "vit_l_triplet_512_384",
+                    ]
+                ),
+            )
+            image_embeddings = self.backbone(x.type(self.backbone_dtype), extra_embed=ray_cond)
+            image_embeddings = image_embeddings.type(batch["img"].dtype)
+
+            # Mask condition if available
+            if self.cfg.MODEL.PROMPT_ENCODER.get("MASK_EMBED_TYPE", None) is not None:
+                # v1: non-iterative mask conditioning
+                if self.cfg.MODEL.PROMPT_ENCODER.get("MASK_PROMPT", "v1") == "v1":
+                    mask_embeddings = self._get_mask_prompt(batch, image_embeddings)
+                    image_embeddings = image_embeddings + mask_embeddings
+                else:
+                    raise NotImplementedError
+        
+        if hand_embeddings is None:
+            crop_hand = self.cfg.MODEL.HAND_IMAGE_SIZE[0] // 4 // 2  # make 4:3 ratio
+            assert crop_hand * 8 == self.cfg.MODEL.HAND_IMAGE_SIZE[0]
+
+            lhand_x = self.data_preprocess(
+                self._flatten_person(batch["lhand_img"]),
+                crop_width=(
+                    self.cfg.MODEL.BACKBONE.TYPE
+                    in [
+                        "vit_hmr",
+                        "hmr2",
+                        "vit",
+                        "vit_b",
+                        "vit_l",
+                        "vit_hmr_512_384",
+                        "vit_hmr_triplet",
+                        "vit_hmr_triplet_512_384",
+                        "vit_l_triplet_512_384",
+                    ]
+                ),
+                crop_hand=crop_hand,
+            )
+        
+            rhand_x = self.data_preprocess(
+                self._flatten_person(batch["rhand_img"]),
+                crop_width=(
+                    self.cfg.MODEL.BACKBONE.TYPE
+                    in [
+                        "vit_hmr",
+                        "hmr2",
+                        "vit",
+                        "vit_b",
+                        "vit_l",
+                        "vit_hmr_512_384",
+                        "vit_hmr_triplet",
+                        "vit_hmr_triplet_512_384",
+                        "vit_l_triplet_512_384",
+                    ]
+                ),
+                crop_hand=crop_hand,
+            )
+
+            _, lhand_image_embeddings, rhand_image_embeddings = (
+                self.backbone(
+                    None,
+                    lhand_x.type(self.backbone_dtype),
+                    rhand_x.type(self.backbone_dtype),
+                    extra_embed=ray_cond,
+                )
+            )
+
+            if self.cfg.MODEL.get('TRIPLET_FUSION_METHOD', 'v0') == "v1":
+                fused_features = image_embeddings
+                hand_embeddings = torch.cat([lhand_image_embeddings.flatten(2, 3), rhand_image_embeddings.flatten(2, 3)], dim=2)
+            else:
+                raise Exception
+            hand_embeddings = hand_embeddings.type(batch["img"].dtype)
+
+        # Prepare input for promptable decoder
+        condition_info = self._get_decoder_condition(batch)
+
+        # Initial estimate with a dummy prompt
+        keypoints_prompt = torch.zeros((batch_size * num_person, 1, 3)).to(batch["img"])
+        keypoints_prompt[:, :, -1] = -2
+
+        # Forward promptable decoder to get updated pose tokens and regression output
+        _, pose_output = self.forward_decoder(
+            image_embeddings,
+            init_estimate=None,
+            keypoints=keypoints_prompt,
+            prev_estimate=None,
+            condition_info=condition_info,
+            batch=batch,
+            full_output=full_output,
+            hand_embeddings=hand_embeddings,
+        )
+
+        if self.cfg.MODEL.DECODER.get("DO_INTERM_PREDS", False):
+            assert isinstance(
+                pose_output, list
+            ), "You're doing DO_INTERM_PREDS but pose_output is not a list?"  # Sanity
+            pose_output_interm, pose_output = pose_output[:-1], pose_output[-1]
+        else:
+            pose_output_interm = None
+
+        return {
+            # "pose_token": pose_token,
+            "atlas": pose_output,  # atlas prediction output
+            "atlas_interm": pose_output_interm,  # List of intermediate decoder outputs.
+            "condition_info": condition_info,
+            "image_embeddings": image_embeddings,
+            "hand_embeddings": hand_embeddings,
+        }

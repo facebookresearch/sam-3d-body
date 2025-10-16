@@ -13,6 +13,7 @@ root = pyrootutils.setup_root(
 )
 
 from sam3d_body_estimator import SAM3DBodyEstimator
+from sam3d_body_estimator_hand import SAM3DBodyEstimatorHand
 
 from tqdm import tqdm
 
@@ -93,12 +94,22 @@ def main(args):
         output_folder = args.output_folder
     os.makedirs(output_folder, exist_ok=True)
 
-    model = SAM3DBodyEstimator(
-        checkpoint_path=args.checkpoint_path,
-        proto_path=PROTO_PATH,
-        detector_path=DETECTOR_FOLDER,
-        moge_path=MOGE_PATH,
-    )
+    if not args.use_tta:
+        model = SAM3DBodyEstimator(
+            checkpoint_path=args.checkpoint_path,
+            proto_path=PROTO_PATH,
+            detector_path=DETECTOR_FOLDER,
+            moge_path=MOGE_PATH,
+        )
+    else:
+        model = SAM3DBodyEstimatorHand(
+            checkpoint_path=args.checkpoint_path,
+            proto_path=PROTO_PATH,
+            detector_path=DETECTOR_FOLDER,
+            moge_path=MOGE_PATH,
+            hand_crop_factor=args.hand_crop_factor,
+            thresh_wrist_angle=args.thresh_wrist_angle,
+        )
 
     image_extensions = ['*.jpg', '*.jpeg', '*.png', '*.gif', '*.bmp', '*.tiff', '*.webp']
     images_list = [image for ext in image_extensions for image in glob(os.path.join(args.image_folder, ext))]
@@ -121,6 +132,9 @@ if __name__ == "__main__":
     parser.add_argument("--checkpoint_path", default="", type=str)
     parser.add_argument("--bbox_thresh", default=0.8, type=float)
     parser.add_argument("--use_mask", action="store_true", default=False)
+    parser.add_argument("--use_tta", action="store_true", default=False)
+    parser.add_argument("--hand_crop_factor", default=0.9, type=float)
+    parser.add_argument("--thresh_wrist_angle", default=1.1, type=float)
     args = parser.parse_args()
 
     main(args)
