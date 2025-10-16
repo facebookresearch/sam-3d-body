@@ -27,5 +27,5 @@ disclosure of security bugs. In those cases, please go through the process
 outlined on that page and do not file a public issue.
 
 ## License
-By contributing to segment-anything, you agree that your contributions will be licensed
+By contributing to SAM 3D Body, you agree that your contributions will be licensed
 under the LICENSE file in the root directory of this source tree.

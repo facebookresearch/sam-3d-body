@@ -6,7 +6,7 @@
 
 *Core contributors, †Project leads
 
-[[`<REPLACE ME Paper>`](https://ai.meta.com/research/publications/sam-2-segment-anything-in-images-and-videos/)] [[`<REPLACE ME Project>`](https://ai.meta.com/sam2)] [[`<REPLACE ME Demo>`](https://sam2.metademolab.com/)] [[`<REPLACE ME Dataset>`](https://ai.meta.com/datasets/segment-anything-video)] [[`<REPLACE ME Blog>`](https://ai.meta.com/blog/segment-anything-2)] [[`<REPLACE ME BibTeX>`](#citing-sam-2)]
+[[`<REPLACE ME Paper>`](https://ai.meta.com/research/publications/sam-2-segment-anything-in-images-and-videos/)] [[`<REPLACE ME Project>`](https://ai.meta.com/sam2)] [[`<REPLACE ME Demo>`](https://sam2.metademolab.com/)] [[`<Dataset>`](https://huggingface.co/datasets/facebook/sam-3d-body-dataset)] [[`<REPLACE ME Blog>`](https://ai.meta.com/blog/segment-anything-2)] [[`<REPLACE ME BibTeX>`](#citing-sam-2)]
 
 ![SAM 3D Body Model Architecture](assets/model_diagram.png?raw=true)
 
@@ -71,7 +71,7 @@ Our SAM 3D Body method shows significant improvements over existing approaches a
 
 < INSTALLATION INSTRUCTIONS HERE >
 
-## Getting Started
+## Getting Started [TODO: Update this]
 
 ### Download Checkpoints
 
@@ -85,12 +85,12 @@ cd ..
 
 or individually from:
 
-- [sam3d_hiera_tiny.pt](https://huggingface.co/facebook/sam3d-hiera-tiny) (placeholder link - to be updated)
-- [sam3d_hiera_small.pt](https://huggingface.co/facebook/sam3d-hiera-small) (placeholder link - to be updated)  
-- [sam3d_hiera_base_plus.pt](https://huggingface.co/facebook/sam3d-hiera-base-plus) (placeholder link - to be updated)
-- [sam3d_hiera_large.pt](https://huggingface.co/facebook/sam3d-hiera-large) (placeholder link - to be updated)
+- [TODO_Update_this_tiny.pt](https://huggingface.co/facebook/TODO_Update_this_tiny) (placeholder link - TODO: Update this)
+- [TODO_Update_this_small.pt](https://huggingface.co/facebook/TODO_Update_this_small) (placeholder link - TODO: Update this)  
+- [TODO_Update_this_base_plus.pt](https://huggingface.co/facebook/TODO_Update_this_base_plus) (placeholder link - TODO: Update this)
+- [TODO_Update_this_large.pt](https://huggingface.co/facebook/TODO_Update_this_large) (placeholder link - TODO: Update this)
 
-Then SAM 3D can be used in a few lines as follows for image prediction.
+Then SAM 3D Body can be used in a few lines as follows for image prediction.
 
 ### Image prediction
 
@@ -110,7 +110,7 @@ Then SAM 3D can be used in a few lines as follows for image prediction.
 
 Alternatively, models can also be loaded from [Hugging Face](https://huggingface.co/models?search=facebook/sam3d) (requires `pip install huggingface_hub`).
 
-For image prediction:
+For image prediction [TODO: Update this]:
 
 ```python
 import torch
@@ -125,32 +125,32 @@ with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
 
 ## Model Description
 
-### SAM 3D checkpoints
+### SAM 3D Body checkpoints
 
-The table below shows the SAM 3D checkpoints released on September 23, 2025.
+The table below shows the SAM 3D Body checkpoints released on [TODO: Update this].
 
 |      **Model**       | **Size (M)** |    **Speed (FPS)**     | **H36M test (MPJPE)** | **3DPW test (MPJPE)** |
 | :------------------: | :----------: | :--------------------: | :-----------------: | :----------------: |
-|   sam3d_hiera_tiny <br /> ([config](configs/sam3d/sam3d_hiera_t.yaml), [checkpoint](https://huggingface.co/facebook/sam3d-hiera-tiny))    |     TBD     |          TBD          |        TBD         |        TBD        |
-|   sam3d_hiera_small <br /> ([config](configs/sam3d/sam3d_hiera_s.yaml), [checkpoint](https://huggingface.co/facebook/sam3d-hiera-small))   |      TBD      |          TBD          |        TBD         |        TBD        |
-| sam3d_hiera_base_plus <br /> ([config](configs/sam3d/sam3d_hiera_b+.yaml), [checkpoint](https://huggingface.co/facebook/sam3d-hiera-base-plus)) |     TBD     |        TBD          |        TBD         |        TBD        |
-|   sam3d_hiera_large <br /> ([config](configs/sam3d/sam3d_hiera_l.yaml), [checkpoint](https://huggingface.co/facebook/sam3d-hiera-large))   |    TBD     |          TBD          |        TBD         |        TBD        |
+|   [TODO: Update this]_tiny <br /> ([config](configs/sam3d/TODO_Update_this_t.yaml), [checkpoint](https://huggingface.co/facebook/TODO_Update_this-tiny))    |     TBD     |          TBD          |        TBD         |        TBD        |
+|   [TODO: Update this]_small <br /> ([config](configs/sam3d/TODO_Update_this_s.yaml), [checkpoint](https://huggingface.co/facebook/TODO_Update_this-small))   |      TBD      |          TBD          |        TBD         |        TBD        |
+| [TODO: Update this]_base_plus <br /> ([config](configs/sam3d/TODO_Update_this_b.yaml), [checkpoint](https://huggingface.co/facebook/TODO_Update_this-base-plus)) |     TBD     |        TBD          |        TBD         |        TBD        |
+|   [TODO: Update this]_large <br /> ([config](configs/sam3d/TODO_Update_this_l.yaml), [checkpoint](https://huggingface.co/facebook/TODO_Update_this-large))   |    TBD     |          TBD          |        TBD         |        TBD        |
 
 
 < TODO: Update when we run speedtests >
 Speed measured on an A100 with `torch 2.5.1, cuda 12.4`. See `benchmark.py` for an example on benchmarking (compiling all the model components). Compiling only the image encoder can be more flexible and also provide (a smaller) speed-up (set `compile_image_encoder: True` in the config).
 
-## Segment Anything 3D Dataset
+## SAM 3D Body Dataset [TODO: Update this]
 
 < Info on the 3D annotations we're releasing >
 
-## Training SAM 3D
+## Training SAM 3D Body [TODO: Update this]
 
-You can train or fine-tune SAM 3D on custom datasets of images, videos, or both.
+You can train or fine-tune SAM 3D Body on custom datasets of images, videos, or both.
 
 < Link to training README >
 
-## Web demo for SAM 3D
+## Web demo for SAM 3D Body [TODO: Update this]
 
 < Link to Web Demo >
 
