@@ -30,60 +30,32 @@ Our SAM 3D Body method shows significant improvements over existing approaches a
 </thead>
 <tbody>
 <tr>
-<td align="center"><strong>Sample 1</strong></td>
+<td align="center"><strong>Sample 1</strong><br><img src="assets/qualitative_comparisons/sample1/input_bbox.png" alt="Sample 1 Input" width="120"></td>
 <td align="center"><img src="assets/qualitative_comparisons/sample1/camerahmr.png" alt="Sample 1 - CameraHMR" width="120"></td>
 <td align="center"><img src="assets/qualitative_comparisons/sample1/nlf.png" alt="Sample 1 - NLF" width="120"></td>
 <td align="center"><img src="assets/qualitative_comparisons/sample1/4dhumans.png" alt="Sample 1 - 4DHumans (HMR2.0b)" width="120"></td>
 <td align="center"><img src="assets/qualitative_comparisons/sample1/SAM 3D Body.png" alt="Sample 1 - SAM 3D Body" width="120"></td>
 </tr>
 <tr>
-<td align="center"><img src="assets/qualitative_comparisons/sample1/input_bbox.png" alt="Sample 1 Input" width="120"></td>
-<td align="center">-</td>
-<td align="center">-</td>
-<td align="center">-</td>
-<td align="center">-</td>
-</tr>
-<tr>
-<td align="center"><strong>Sample 2</strong></td>
+<td align="center"><strong>Sample 2</strong><br><img src="assets/qualitative_comparisons/sample2/input_bbox.png" alt="Sample 2 Input" width="120"></td>
 <td align="center"><img src="assets/qualitative_comparisons/sample2/camerahmr.png" alt="Sample 2 - CameraHMR" width="120"></td>
 <td align="center"><img src="assets/qualitative_comparisons/sample2/nlf.png" alt="Sample 2 - NLF" width="120"></td>
 <td align="center"><img src="assets/qualitative_comparisons/sample2/4dhumans.png" alt="Sample 2 - 4DHumans (HMR2.0b)" width="120"></td>
 <td align="center"><img src="assets/qualitative_comparisons/sample2/SAM 3D Body.png" alt="Sample 2 - SAM 3D Body" width="120"></td>
 </tr>
 <tr>
-<td align="center"><img src="assets/qualitative_comparisons/sample2/input_bbox.png" alt="Sample 2 Input" width="120"></td>
-<td align="center">-</td>
-<td align="center">-</td>
-<td align="center">-</td>
-<td align="center">-</td>
-</tr>
-<tr>
-<td align="center"><strong>Sample 3</strong></td>
+<td align="center"><strong>Sample 3</strong><br><img src="assets/qualitative_comparisons/sample3/input_bbox.png" alt="Sample 3 Input" width="120"></td>
 <td align="center"><img src="assets/qualitative_comparisons/sample3/camerahmr.png" alt="Sample 3 - CameraHMR" width="120"></td>
 <td align="center"><img src="assets/qualitative_comparisons/sample3/nlf.png" alt="Sample 3 - NLF" width="120"></td>
 <td align="center"><img src="assets/qualitative_comparisons/sample3/4dhumans.png" alt="Sample 3 - 4DHumans (HMR2.0b)" width="120"></td>
 <td align="center"><img src="assets/qualitative_comparisons/sample3/SAM 3D Body.png" alt="Sample 3 - SAM 3D Body" width="120"></td>
 </tr>
 <tr>
-<td align="center"><img src="assets/qualitative_comparisons/sample3/input_bbox.png" alt="Sample 3 Input" width="120"></td>
-<td align="center">-</td>
-<td align="center">-</td>
-<td align="center">-</td>
-<td align="center">-</td>
-</tr>
-<tr>
-<td align="center"><strong>Sample 4</strong></td>
+<td align="center"><strong>Sample 4</strong><br><img src="assets/qualitative_comparisons/sample4/input_bbox.png" alt="Sample 4 Input" width="120"></td>
 <td align="center"><img src="assets/qualitative_comparisons/sample4/camerahmr.png" alt="Sample 4 - CameraHMR" width="120"></td>
 <td align="center"><img src="assets/qualitative_comparisons/sample4/nlf.png" alt="Sample 4 - NLF" width="120"></td>
 <td align="center"><img src="assets/qualitative_comparisons/sample4/4dhumans.png" alt="Sample 4 - 4DHumans (HMR2.0b)" width="120"></td>
 <td align="center"><img src="assets/qualitative_comparisons/sample4/SAM 3D Body.png" alt="Sample 4 - SAM 3D Body" width="120"></td>
-</tr>
-<tr>
-<td align="center"><img src="assets/qualitative_comparisons/sample4/input_bbox.png" alt="Sample 4 Input" width="120"></td>
-<td align="center">-</td>
-<td align="center">-</td>
-<td align="center">-</td>
-<td align="center">-</td>
 </tr>
 </tbody>
 </table>
