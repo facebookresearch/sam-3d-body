@@ -67,9 +67,9 @@ Our SAM 3D Body method shows significant improvements over existing approaches a
 **10/20/2025 -- Checkpoints Launched, Dataset Released, Web Demo and Paper are out**
 - < MORE DETAILS HERE >
 
-## Installation [TODO: Update this]
+## Installation
 
-< INSTALLATION INSTRUCTIONS HERE >
+Please see [`INSTALL.md`](./INSTALL.md) for environment installation instructions of SAM 3D Body codebase.
 
 ## Getting Started [TODO: Update this]
 
