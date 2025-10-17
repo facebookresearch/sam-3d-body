@@ -16,51 +16,49 @@
 
 ## Visual Comparisons
 
-Our SAM 3D Body method shows significant improvements over existing approaches across diverse scenarios:
+Our SAM 3D Body method demonstrates superior reconstruction quality with more accurate pose estimation, better shape recovery, and significantly improved handling of occlusions and challenging viewpoints compared to existing approaches.
 
 <table>
 <thead>
 <tr>
 <th align="center">Input</th>
+<th align="center"><strong>SAM 3D Body</strong></th>
 <th align="center">CameraHMR</th>
 <th align="center">NLF</th>
-<th align="center">4DHumans (HMR2.0b)</th>
-<th align="center"><strong>SAM 3D Body (Ours)</strong></th>
+<th align="center">HMR2.0b</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td align="center"><img src="assets/qualitative_comparisons/sample1/input_bbox.png" alt="Sample 1 Input" width="120"></td>
+<td align="center"><img src="assets/qualitative_comparisons/sample1/SAM 3D Body.png" alt="Sample 1 - SAM 3D Body" width="120"></td>
 <td align="center"><img src="assets/qualitative_comparisons/sample1/camerahmr.png" alt="Sample 1 - CameraHMR" width="120"></td>
 <td align="center"><img src="assets/qualitative_comparisons/sample1/nlf.png" alt="Sample 1 - NLF" width="120"></td>
 <td align="center"><img src="assets/qualitative_comparisons/sample1/4dhumans.png" alt="Sample 1 - 4DHumans (HMR2.0b)" width="120"></td>
-<td align="center"><img src="assets/qualitative_comparisons/sample1/SAM 3D Body.png" alt="Sample 1 - SAM 3D Body" width="120"></td>
 </tr>
 <tr>
 <td align="center"><img src="assets/qualitative_comparisons/sample2/input_bbox.png" alt="Sample 2 Input" width="120"></td>
+<td align="center"><img src="assets/qualitative_comparisons/sample2/SAM 3D Body.png" alt="Sample 2 - SAM 3D Body" width="120"></td>
 <td align="center"><img src="assets/qualitative_comparisons/sample2/camerahmr.png" alt="Sample 2 - CameraHMR" width="120"></td>
 <td align="center"><img src="assets/qualitative_comparisons/sample2/nlf.png" alt="Sample 2 - NLF" width="120"></td>
 <td align="center"><img src="assets/qualitative_comparisons/sample2/4dhumans.png" alt="Sample 2 - 4DHumans (HMR2.0b)" width="120"></td>
-<td align="center"><img src="assets/qualitative_comparisons/sample2/SAM 3D Body.png" alt="Sample 2 - SAM 3D Body" width="120"></td>
 </tr>
 <tr>
 <td align="center"><img src="assets/qualitative_comparisons/sample3/input_bbox.png" alt="Sample 3 Input" width="120"></td>
+<td align="center"><img src="assets/qualitative_comparisons/sample3/SAM 3D Body.png" alt="Sample 3 - SAM 3D Body" width="120"></td>
 <td align="center"><img src="assets/qualitative_comparisons/sample3/camerahmr.png" alt="Sample 3 - CameraHMR" width="120"></td>
 <td align="center"><img src="assets/qualitative_comparisons/sample3/nlf.png" alt="Sample 3 - NLF" width="120"></td>
 <td align="center"><img src="assets/qualitative_comparisons/sample3/4dhumans.png" alt="Sample 3 - 4DHumans (HMR2.0b)" width="120"></td>
-<td align="center"><img src="assets/qualitative_comparisons/sample3/SAM 3D Body.png" alt="Sample 3 - SAM 3D Body" width="120"></td>
 </tr>
 <tr>
 <td align="center"><img src="assets/qualitative_comparisons/sample4/input_bbox.png" alt="Sample 4 Input" width="120"></td>
+<td align="center"><img src="assets/qualitative_comparisons/sample4/SAM 3D Body.png" alt="Sample 4 - SAM 3D Body" width="120"></td>
 <td align="center"><img src="assets/qualitative_comparisons/sample4/camerahmr.png" alt="Sample 4 - CameraHMR" width="120"></td>
 <td align="center"><img src="assets/qualitative_comparisons/sample4/nlf.png" alt="Sample 4 - NLF" width="120"></td>
 <td align="center"><img src="assets/qualitative_comparisons/sample4/4dhumans.png" alt="Sample 4 - 4DHumans (HMR2.0b)" width="120"></td>
-<td align="center"><img src="assets/qualitative_comparisons/sample4/SAM 3D Body.png" alt="Sample 4 - SAM 3D Body" width="120"></td>
 </tr>
 </tbody>
 </table>
-
-*Our method demonstrates superior reconstruction quality with more accurate pose estimation, better shape recovery, and improved handling of occlusions and challenging viewpoints compared to existing approaches.*
 
 ## Latest updates
 
@@ -71,7 +69,7 @@ Our SAM 3D Body method shows significant improvements over existing approaches a
 
 Please see [`INSTALL.md`](./INSTALL.md) for environment installation instructions of SAM 3D Body codebase.
 
-## Getting Started [TODO: Update this]
+## Getting Started
 
 ### Download Checkpoints [TODO: Update this]
 
@@ -123,7 +121,7 @@ with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
     poses, meshes = predictor.predict(<input_prompts>)
 ```
 
-## Model Description [TODO: Update this]
+## Model Description
 
 ### SAM 3D Body checkpoints [TODO: Update this]
 
