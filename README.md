@@ -57,6 +57,7 @@
 </tr>
 </tbody>
 </table>
+
 *Our SAM 3D Body demonstrates superior reconstruction quality with more accurate pose estimation, better shape recovery, and improved handling of occlusions and challenging viewpoints compared to existing approaches.*
 
 ## Latest updates
