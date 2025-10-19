@@ -71,7 +71,7 @@ Please see [`INSTALL.md`](./INSTALL.md) for environment installation instruction
 
 ## Getting Started
 
-### Download Checkpoints [TODO: Update this]
+### Download Checkpoints [TODO: Devansh and Xiaoxuan Please Update this]
 
 First, we need to download a model checkpoint. All the model checkpoints can be downloaded by running:
 
@@ -90,21 +90,19 @@ or individually from:
 
 Then SAM 3D Body can be used in a few lines as follows for image prediction.
 
-### Image prediction [TODO: Update this]
+### Inference Code [TODO: Jinkun Please Double Check on this]
 
-< MODELS DESCRIPTION HERE >
+```python
+python demo.py --image_folder path/to/your/images --checkpoint_path path/to/your/model_checkpoint.ckpt
+```
 
-< SIMPLE CODE TO RUN INFERENCE HERE >
-
-< Link to Colab Notebook >
-
-### Video prediction [TODO: Update this]
-
-< Optional: Do we want to add tooling to run inference on videos? >
+## Web demo for SAM 3D Body [TODO: Xiaoxuan Please Update this]
 
 < Link to Colab Notebook >
 
-## Load from 🤗 Hugging Face [TODO: Update this]
+< Link to Jupyter Notebook >
+
+## Load from 🤗 Hugging Face [TODO: Devansh and Xiaoxuan Please Update this]
 
 Alternatively, models can also be loaded from [Hugging Face](https://huggingface.co/models?search=facebook/sam3d) (requires `pip install huggingface_hub`).
 
@@ -123,7 +121,7 @@ with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
 
 ## Model Description
 
-### SAM 3D Body checkpoints [TODO: Update this]
+### SAM 3D Body checkpoints [TODO: Xitong Please Update this]
 
 The table below shows the SAM 3D Body checkpoints released on [TODO: Update this].
 
@@ -138,19 +136,9 @@ The table below shows the SAM 3D Body checkpoints released on [TODO: Update this
 < TODO: Update when we run speedtests >
 Speed measured on an A100 with `torch 2.5.1, cuda 12.4`. See `benchmark.py` for an example on benchmarking (compiling all the model components). Compiling only the image encoder can be more flexible and also provide (a smaller) speed-up (set `compile_image_encoder: True` in the config).
 
-## SAM 3D Body Dataset [TODO: Update this]
+## SAM 3D Body Dataset [TODO: Taosha Please Update this]
 
 < Info on the 3D annotations we're releasing >
-
-## Training SAM 3D Body [TODO: Update this]
-
-You can train or fine-tune SAM 3D Body on custom datasets of images, videos, or both.
-
-< Link to training README >
-
-## Web demo for SAM 3D Body [TODO: Update this]
-
-< Link to Web Demo >
 
 ## License
 
@@ -165,7 +153,7 @@ See [contributing](CONTRIBUTING.md) and the [code of conduct](CODE_OF_CONDUCT.md
 The SAM 3D Body project was made possible with the help of many contributors:
 Vivian Lee, George Orlin, Matt Feiszli, Nikhila Ravi, Andrew Westbury, Jyun-Ting Song, Zejia Weng, Xizi Zhang, Yuting Ye, Federica Bogo, Ronald Mallet, Ahmed Osman, Rawal Khirodkar, Javier Romero, Carsten Stoll, Juan Carlos Guzman, Sofien Bouaziz, Yuan Dong, Su Zhaoen, Fabian Prada, Alexander Richard, Michael Zollhoefer, Roman Rädle, Sasha Mitts, Michelle Chan, Yael Yungster, Azita Shokrpour, Helen Klein, Mallika Malhotra, Ida Cheng, Eva Galper.
 
-Third-party code: [TODO: Update this]
+Third-party code: detectron2, and more? [TODO: Xitong Please Update this]
 
 ## Citing SAM 3D Body [TODO: Update this]
 
