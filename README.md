@@ -62,61 +62,40 @@
 
 ## Latest updates
 
-**10/20/2025 -- Checkpoints Launched, Dataset Released, Web Demo and Paper are out**
+**11/17/2025 -- Checkpoints Launched, Dataset Released, Web Demo and Paper are out**
 - < MORE DETAILS HERE >
 
 ## Installation
+See [Install.md](INSTALL.md)
 
-Please see [`INSTALL.md`](./INSTALL.md) for environment installation instructions of SAM 3D Body codebase.
+## Usage - Inference
 
-## Getting Started
-
-### Download Checkpoints [TODO: Devansh and Xiaoxuan Please Update this]
-
-First, we need to download a model checkpoint. All the model checkpoints can be downloaded by running:
-
-```bash
-cd checkpoints && \
-./download_ckpts.sh && \
-cd ..
-```
-
-or individually from:
-
-- [TODO_Update_this_tiny.pt](https://huggingface.co/facebook/TODO_Update_this_tiny) (placeholder link - TODO: Update this)
-- [TODO_Update_this_small.pt](https://huggingface.co/facebook/TODO_Update_this_small) (placeholder link - TODO: Update this)  
-- [TODO_Update_this_base_plus.pt](https://huggingface.co/facebook/TODO_Update_this_base_plus) (placeholder link - TODO: Update this)
-- [TODO_Update_this_large.pt](https://huggingface.co/facebook/TODO_Update_this_large) (placeholder link - TODO: Update this)
-
-Then SAM 3D Body can be used in a few lines as follows for image prediction.
-
-### Inference Code [TODO: Jinkun Please Double Check on this]
+Models can be loaded directly from [Hugging Face]
 
 ```python
-python demo.py --image_folder path/to/your/images --checkpoint_path path/to/your/model_checkpoint.ckpt
+from sam_3d_body import build_sam_3d_body_hf
+
+model = build_sam_3d_body_hf("facebook/sam-3d-body")
+outputs = model.process_one_image("path/to/image.jpg")
 ```
 
-## Web demo for SAM 3D Body [TODO: Xiaoxuan Please Update this]
+Available models on HuggingFace:
+- `facebook/sam-3d-body`
+- `facebook/sam-3d-body-small`
 
-< Link to Colab Notebook >
+## Usage - Fine-Tuning and Research
 
-< Link to Jupyter Notebook >
+### Download checkpoints
+```
+huggingface-cli download facebook/sam-3d-body --local-dir checkpoints/sam-3d-body
+huggingface-cli download facebook/sam-3d-body-small --local-dir checkpoints/sam-3d-body-small
+```
 
-## Load from 🤗 Hugging Face [TODO: Devansh and Xiaoxuan Please Update this]
-
-Alternatively, models can also be loaded from [Hugging Face](https://huggingface.co/models?search=facebook/sam3d) (requires `pip install huggingface_hub`).
-
-For image prediction [TODO: Update this]:
-
-```python
-import torch
-from sam3d.sam3d_image_predictor import SAM3DImagePredictor
-
-predictor = SAM3DImagePredictor.from_pretrained("facebook/sam3d-hiera-large")
-
-with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
-    predictor.set_image(<your_image>)
-    poses, meshes = predictor.predict(<input_prompts>)
+### Load the model directly
+```
+model = build_sam_3d_body_model(
+    checkpoint_path: str = "checkpoints/last.ckpt",
+    proto_path: str = "checkpoints/assets/")
 ```
 
 ## Model Description
@@ -127,18 +106,18 @@ The table below shows the SAM 3D Body checkpoints released on [TODO: Update this
 
 |      **Model**       | **Size (M)** |    **Speed (FPS)**     | **H36M test (MPJPE)** | **3DPW test (MPJPE)** |
 | :------------------: | :----------: | :--------------------: | :-----------------: | :----------------: |
-|   [TODO: Update this]_tiny <br /> ([config](configs/sam3d/TODO_Update_this_t.yaml), [checkpoint](https://huggingface.co/facebook/TODO_Update_this-tiny))    |     TBD     |          TBD          |        TBD         |        TBD        |
-|   [TODO: Update this]_small <br /> ([config](configs/sam3d/TODO_Update_this_s.yaml), [checkpoint](https://huggingface.co/facebook/TODO_Update_this-small))   |      TBD      |          TBD          |        TBD         |        TBD        |
-| [TODO: Update this]_base_plus <br /> ([config](configs/sam3d/TODO_Update_this_b.yaml), [checkpoint](https://huggingface.co/facebook/TODO_Update_this-base-plus)) |     TBD     |        TBD          |        TBD         |        TBD        |
-|   [TODO: Update this]_large <br /> ([config](configs/sam3d/TODO_Update_this_l.yaml), [checkpoint](https://huggingface.co/facebook/TODO_Update_this-large))   |    TBD     |          TBD          |        TBD         |        TBD        |
+|   sam_3d_body <br /> ([config](https://huggingface.co/facebook/sam-3d-body/blob/main/model_config.yaml), [checkpoint](https://huggingface.co/facebook/sam-3d-body))    |     TBD     |          TBD          |        TBD         |        TBD        |
+|   sam_3d_body_small <br /> ([config](https://huggingface.co/facebook/sam-3d-body-small/blob/main/model_config.yaml), [checkpoint](https://huggingface.co/facebook/sam-3d-body-fast))   |      TBD      |          TBD          |        TBD         |        TBD        |
 
 
 < TODO: Update when we run speedtests >
 Speed measured on an A100 with `torch 2.5.1, cuda 12.4`. See `benchmark.py` for an example on benchmarking (compiling all the model components). Compiling only the image encoder can be more flexible and also provide (a smaller) speed-up (set `compile_image_encoder: True` in the config).
 
-## SAM 3D Body Dataset [TODO: Taosha Please Update this]
+## SAM 3D Body Dataset [TODO: Devansh]
 
 < Info on the 3D annotations we're releasing >
+
+### Dataset Loading
 
 ## License
 
