@@ -1,3 +1,0 @@
-[submodule "sam3d_image/sam3d_image/model/backbone/representations/mesh/flexicubes"]
-	path = sam3d_image/sam3d_image/model/backbone/representations/mesh/flexicubes
-	url = https://github.com/MaxtirError/FlexiCubes.git
