@@ -97,9 +97,7 @@ class SAM3DBodyTriplet(BaseModel):
         if self.cfg.MODEL.get('DISABLE_HAND_PCA', False):
             self.head_pose.atlas.hand_pose_comps_ori = nn.Parameter(self.head_pose.atlas.hand_pose_comps.clone(), requires_grad=False)
             self.head_pose.atlas.hand_pose_comps.data = torch.eye(54).to(self.head_pose.atlas.hand_pose_comps.data).float()
-        if self.cfg.LOSS_WEIGHTS.get('HAND_LOSS_KINEMATIC_ANNEALING', False):
-            # Cuda version doesn't support double backwards
-            self.head_pose.atlas.lbs_fn.force_using_pytorch_functions = True
+        
         # Initialize pose token with learnable params (not mean pose in SMPL)
         # Note: bias/initial value should be zero-pose in cont, not all-zeros
         self.init_pose = nn.Embedding(1, self.head_pose.npose)
@@ -1210,7 +1208,7 @@ class SAM3DBodyTriplet(BaseModel):
             scale_factor = 2.0
             scale_factor = 1.6
         hand_body_ratio = 0.10
-        square_box = self.cfg.DATASETS.AUGMENTATION.get("SQUARE_BOX", False)
+        square_box = True
         global save_img_count
         if getattr(self, "hand_crop_strategy", "kps_range") == "kps_range":
             ## Get hand 2d KPS

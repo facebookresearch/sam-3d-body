@@ -15,8 +15,6 @@ def build_head(cfg, head_type="atlas46"):
             num_scale_comps=cfg.MODEL.ATLAS_HEAD.NUM_SCALE_COMPS,
             atlas_model_path=cfg.MODEL.ATLAS_HEAD.ATLAS_MODEL_PATH,
             mesh_type=cfg.MODEL.ATLAS_HEAD.MESH_TYPE,
-            extra_joint_regressor=cfg.MODEL.SMPL_HEAD.EXTRA_JOINT,
-            smpl_model_path=cfg.MODEL.SMPL_HEAD.SMPL_MODEL_PATH,
             fix_kps_eye_and_chin=cfg.MODEL.ATLAS_HEAD.get("FIX_KPS_EYE_AND_CHIN", True),
             znorm_fullbody_scales=cfg.MODEL.ATLAS_HEAD.get(
                 "ZNORM_FULL_BODY_SCALES", True
