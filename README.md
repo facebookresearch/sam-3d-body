@@ -62,130 +62,41 @@
 
 ## Latest updates
 
-**10/20/2025 -- Checkpoints Launched, Dataset Released, Web Demo and Paper are out**
+**11/17/2025 -- Checkpoints Launched, Dataset Released, Web Demo and Paper are out**
 - < MORE DETAILS HERE >
 
 ## Installation
+See [Install.md](INSTALL.md)
 
-### Quick Start with PyPI
+## Usage - Inference
 
-Install SAM 3D Body from PyPI:
-
-```bash
-pip install sam-3d-body
-```
-
-For visualization support:
-
-```bash
-pip install sam-3d-body[vis]
-```
-
-For all optional features:
-
-```bash
-pip install sam-3d-body[full]
-```
-
-**Note:** Some dependencies (momentum, detectron2, pytorch3d) require git installation. See the [Git Dependencies](#git-dependencies) section below.
-
-### Development Installation
-
-For development or to use the latest features, install from source:
-
-```bash
-git clone https://github.com/facebookresearch/sam-3d-body.git
-cd sam-3d-body
-pip install -e .
-```
-
-For detailed environment setup instructions (CUDA, conda, etc.), please see [`INSTALL.md`](./INSTALL.md).
-
-## Getting Started
-
-### Download Checkpoints [TODO: Devansh and Xiaoxuan Please Update this]
-
-First, we need to download a model checkpoint. All the model checkpoints can be downloaded by running:
-
-```bash
-cd checkpoints && \
-./download_ckpts.sh && \
-cd ..
-```
-
-or individually from:
-
-- [TODO_Update_this_tiny.pt](https://huggingface.co/facebook/TODO_Update_this_tiny) (placeholder link - TODO: Update this)
-- [TODO_Update_this_small.pt](https://huggingface.co/facebook/TODO_Update_this_small) (placeholder link - TODO: Update this)  
-- [TODO_Update_this_base_plus.pt](https://huggingface.co/facebook/TODO_Update_this_base_plus) (placeholder link - TODO: Update this)
-- [TODO_Update_this_large.pt](https://huggingface.co/facebook/TODO_Update_this_large) (placeholder link - TODO: Update this)
-
-Then SAM 3D Body can be used in a few lines as follows for image prediction.
-
-### Quick Start - Inference
-
-Using the Python API:
-
-```python
-from sam_3d_body import build_sam_3d_body_model
-
-# Build model from local checkpoint
-model = build_sam_3d_body_model(
-    checkpoint_path="path/to/checkpoint.ckpt",
-    proto_path="path/to/assets",
-    detector_path="path/to/detector"  # optional
-)
-
-# Or download from HuggingFace Hub
-from sam_3d_body import build_sam_3d_body_hf
-model = build_sam_3d_body_hf("facebook/sam-3d-body-large")
-
-# Process an image
-outputs = model.process_one_image("path/to/image.jpg")
-
-# Access results
-for person in outputs:
-    vertices = person["pred_vertices"]
-    keypoints_3d = person["pred_keypoints_3d"]
-    keypoints_2d = person["pred_keypoints_2d"]
-```
-
-Using the demo script:
-
-```bash
-python examples/demo.py \
-    --image_folder path/to/images \
-    --checkpoint_path path/to/checkpoint.ckpt \
-    --proto_path path/to/assets
-```
-
-See [`examples/README.md`](./examples/README.md) for more details.
-
-## Web demo for SAM 3D Body [TODO: Xiaoxuan Please Update this]
-
-< Link to Colab Notebook >
-
-< Link to Jupyter Notebook >
-
-## Load from 🤗 Hugging Face
-
-Models can be loaded directly from [Hugging Face](https://huggingface.co/models?search=facebook/sam-3d-body) (HuggingFace Hub support is included by default):
+Models can be loaded directly from [Hugging Face]
 
 ```python
 from sam_3d_body import build_sam_3d_body_hf
 
-# Download and load model from HuggingFace
-model = build_sam_3d_body_hf("facebook/sam-3d-body-large")
-
-# Process images
+model = build_sam_3d_body_hf("facebook/sam-3d-body")
 outputs = model.process_one_image("path/to/image.jpg")
 ```
 
 Available models on HuggingFace:
-- `facebook/sam-3d-body-tiny`
+- `facebook/sam-3d-body`
 - `facebook/sam-3d-body-small`
-- `facebook/sam-3d-body-base`
-- `facebook/sam-3d-body-large`
+
+## Usage - Fine-Tuning and Research
+
+### Download checkpoints
+```
+huggingface-cli download facebook/sam-3d-body --local-dir checkpoints/sam-3d-body
+huggingface-cli download facebook/sam-3d-body-small --local-dir checkpoints/sam-3d-body-small
+```
+
+### Load the model directly
+```
+model = build_sam_3d_body_model(
+    checkpoint_path: str = "checkpoints/last.ckpt",
+    proto_path: str = "checkpoints/assets/")
+```
 
 ## Model Description
 
@@ -195,41 +106,18 @@ The table below shows the SAM 3D Body checkpoints released on [TODO: Update this
 
 |      **Model**       | **Size (M)** |    **Speed (FPS)**     | **H36M test (MPJPE)** | **3DPW test (MPJPE)** |
 | :------------------: | :----------: | :--------------------: | :-----------------: | :----------------: |
-|   [TODO: Update this]_tiny <br /> ([config](configs/sam3d/TODO_Update_this_t.yaml), [checkpoint](https://huggingface.co/facebook/TODO_Update_this-tiny))    |     TBD     |          TBD          |        TBD         |        TBD        |
-|   [TODO: Update this]_small <br /> ([config](configs/sam3d/TODO_Update_this_s.yaml), [checkpoint](https://huggingface.co/facebook/TODO_Update_this-small))   |      TBD      |          TBD          |        TBD         |        TBD        |
-| [TODO: Update this]_base_plus <br /> ([config](configs/sam3d/TODO_Update_this_b.yaml), [checkpoint](https://huggingface.co/facebook/TODO_Update_this-base-plus)) |     TBD     |        TBD          |        TBD         |        TBD        |
-|   [TODO: Update this]_large <br /> ([config](configs/sam3d/TODO_Update_this_l.yaml), [checkpoint](https://huggingface.co/facebook/TODO_Update_this-large))   |    TBD     |          TBD          |        TBD         |        TBD        |
+|   sam_3d_body <br /> ([config](https://huggingface.co/facebook/sam-3d-body/blob/main/model_config.yaml), [checkpoint](https://huggingface.co/facebook/sam-3d-body))    |     TBD     |          TBD          |        TBD         |        TBD        |
+|   sam_3d_body_small <br /> ([config](https://huggingface.co/facebook/sam-3d-body-small/blob/main/model_config.yaml), [checkpoint](https://huggingface.co/facebook/sam-3d-body-fast))   |      TBD      |          TBD          |        TBD         |        TBD        |
 
 
 < TODO: Update when we run speedtests >
 Speed measured on an A100 with `torch 2.5.1, cuda 12.4`. See `benchmark.py` for an example on benchmarking (compiling all the model components). Compiling only the image encoder can be more flexible and also provide (a smaller) speed-up (set `compile_image_encoder: True` in the config).
 
-## SAM 3D Body Dataset [TODO: Taosha Please Update this]
+## SAM 3D Body Dataset [TODO: Devansh]
 
 < Info on the 3D annotations we're releasing >
 
-## Git Dependencies
-
-Some dependencies cannot be installed via PyPI and require git installation:
-
-```bash
-# PyMomentum (required for model architecture)
-pip install git+https://github.com/facebookresearch/momentum@77c3994
-
-# Detectron2 (required for human detection)
-pip install git+https://github.com/facebookresearch/detectron2.git@a1ce2f9
-
-# PyTorch3D (optional, for advanced 3D operations)
-pip install git+https://github.com/facebookresearch/pytorch3d.git@75ebeea
-
-# MoGe (optional, for FOV estimation)
-pip install git+https://github.com/microsoft/MoGe.git
-
-# Flash Attention (optional, for faster inference)
-pip install flash-attn==2.7.3
-```
-
-For a complete setup script, see [`install_git_deps.sh`](./install_git_deps.sh) or refer to [`INSTALL.md`](./INSTALL.md) for detailed environment setup.
+### Dataset Loading
 
 ## License
 

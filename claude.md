@@ -89,11 +89,10 @@ sam-3d-body/
 │   └── README.md            # Example documentation
 │
 ├── assets/                  # Images, diagrams for README
-├── pyproject.toml          # Package configuration (new)
-├── requirements.txt        # Python dependencies (new)
-├── MANIFEST.in             # Package manifest (new)
-├── install_git_deps.sh     # Git dependency installer (new)
-├── PUBLISHING.md           # PyPI publishing guide (new)
+├── pyproject.toml          # Package configuration
+├── requirements.txt        # Python dependencies
+├── MANIFEST.in             # Package manifest
+├── PUBLISHING.md           # PyPI publishing guide
 ├── README.md               # Project documentation
 ├── INSTALL.md              # Installation guide
 └── LICENSE                 # Apache 2.0
@@ -177,15 +176,11 @@ outputs = {
 
 ### Import Conventions
 
-**Always use the new namespace:**
+**Always use the sam_3d_body namespace:**
 ```python
-# Correct
 from sam_3d_body import SAM3DBodyEstimator, build_sam_3d_body_model
 from sam_3d_body.models.meta_arch import SAM3DBody
 from sam_3d_body.visualization import Renderer
-
-# Wrong (old namespace)
-from core import SAM3DBodyEstimator  # DO NOT USE
 ```
 
 ### Code Patterns
@@ -221,7 +216,6 @@ from sam_3d_body import build_sam_3d_body_model
 model = build_sam_3d_body_model(
     checkpoint_path="path/to/checkpoint.ckpt",
     proto_path="path/to/assets",
-    mode="eval"  # or "train"
 )
 
 # Option 3: HuggingFace Hub

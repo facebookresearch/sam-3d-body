@@ -7,12 +7,10 @@ import numpy as np
 import pyrender
 import torch
 import trimesh
-from sam_3d_body.models.modules.geometry_utils import perspective_projection
 from sam_3d_body.visualization.renderer import Renderer
 from torchvision.utils import make_grid
 
 from .render_atlas import render_atlas
-from .render_openpose import render_openpose
 
 
 def create_raymond_lights():

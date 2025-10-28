@@ -1,7 +1,4 @@
-# some code is from Devansh's file: https://www.internalfb.com/intern/anp/view/?id=6991398
-import numpy as np 
-import torch 
-import matplotlib.pyplot as plt
+import numpy as np
 import cv2 
 
 

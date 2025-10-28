@@ -1,7 +1,6 @@
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Union, Optional
+from typing import Dict, List
 import random
-import numpy as np
 import torch
 
 from omegaconf import DictConfig

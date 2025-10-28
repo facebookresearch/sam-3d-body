@@ -12,7 +12,6 @@ from pytorch3d.renderer import (
     TexturesVertex,
 )
 from pytorch3d.structures import Meshes
-from pytorch3d.structures.meshes import join_meshes_as_scene
 
 
 def overlay_image_onto_background(image, mask, bbox, background):

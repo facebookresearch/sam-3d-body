@@ -10,7 +10,7 @@ from sam_3d_body.utils.misc import to_numpy
 from sam_3d_body.visualization.utils import draw_box
 
 from sam_3d_body.visualization.renderer import Renderer
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional
 
 LIGHT_BLUE = (0.65098039,  0.74117647,  0.85882353)
 

@@ -14,18 +14,14 @@ def build_sam_3d_body_model(
     scale_factor=None,
     just_left_hand=False,
     use_face=False,
-    mode="eval"
 ):
 
-    model = SAM3DBodyEstimator(
+    return SAM3DBodyEstimator(
         checkpoint_path=checkpoint_path,
         proto_path=proto_path,
         detector_path=detector_path,
         moge_path=moge_path,
     )
-    if mode == "eval":
-        model.eval()
-    return model
 
 def _hf_download(repo_id):
     from huggingface_hub import snapshot_download

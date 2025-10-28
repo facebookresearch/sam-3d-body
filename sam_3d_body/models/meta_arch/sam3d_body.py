@@ -1,4 +1,3 @@
-import os
 from typing import Dict, Optional, Tuple
 
 import numpy as np
@@ -6,17 +5,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from sam_3d_body.utils.checkpoint import load_state_dict
-from sam_3d_body.utils.config import get_config
-
-# from sam_3d_body.utils.config import get_config
 from sam_3d_body.utils.logging import get_pylogger
-from torchvision.ops import roi_align
 
 from ..backbones import create_backbone
 from ..decoders import build_decoder, build_keypoint_sampler, PromptEncoder
 from ..heads import build_head
-from ..modules import to_2tuple
 from ..modules.transformer import FFN
 
 from .base_model import BaseModel

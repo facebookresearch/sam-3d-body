@@ -6,7 +6,6 @@ import torch
 import torch.nn as nn
 
 from ..modules import rot6d_to_rotmat
-from ..modules.atlas46 import ATLAS46
 from ..modules.proto import Proto
 from ..modules.atlas_utils import (
     atlas46_param_hand_mask,

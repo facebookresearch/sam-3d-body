@@ -1,6 +1,3 @@
-import os.path as osp
-
-import pickle
 from typing import Dict, Optional
 
 import torch

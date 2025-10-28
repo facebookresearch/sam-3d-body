@@ -1,26 +1,5 @@
 # Installation Guide for SAM 3D Body
 
-## Quick Installation from PyPI
-
-For most users, the simplest way to install SAM 3D Body is via PyPI:
-
-```bash
-# Basic installation
-pip install sam-3d-body
-
-# With visualization support
-pip install sam-3d-body[vis]
-
-# With all optional features
-pip install sam-3d-body[full]
-```
-
-After installing from PyPI, you'll need to install the git-based dependencies (see [Git Dependencies](#git-dependencies) below).
-
-## Development Installation from Source
-
-If you want to develop or modify SAM 3D Body, follow the step-by-step installation below.
-
 ## Step-by-Step Installation
 
 ### 1. Create and Activate Environment
@@ -129,38 +108,3 @@ pip install git+https://github.com/microsoft/MoGe.git
 ```bash
 conda install xformers=="0.0.29.post1"="cuda_118*" -y
 ```
-
-### 14. Install SAM 3D Body Package
-
-After installing all dependencies, install the SAM 3D Body package itself:
-
-```bash
-# For development (editable install)
-pip install -e .
-
-# Or for regular installation
-pip install .
-```
-
-## Git Dependencies
-
-The following dependencies require git installation and cannot be installed via PyPI. These are already covered in the step-by-step guide above, but for reference:
-
-```bash
-# PyMomentum (required for model architecture)
-pip install git+https://github.com/facebookresearch/momentum@77c3994
-
-# Detectron2 (required for human detection)
-pip install git+https://github.com/facebookresearch/detectron2.git@a1ce2f9
-
-# PyTorch3D (optional, for advanced 3D operations)
-pip install git+https://github.com/facebookresearch/pytorch3d.git@75ebeea
-
-# MoGe (optional, for FOV estimation)
-pip install git+https://github.com/microsoft/MoGe.git
-
-# Flash Attention (optional, for faster inference)
-pip install flash-attn==2.7.3
-```
-
-For a convenience script that installs all git dependencies, see [`install_git_deps.sh`](./install_git_deps.sh).

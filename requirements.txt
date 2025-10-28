@@ -1,5 +1,6 @@
 # SAM 3D Body Core Dependencies
 # For full installation instructions, see INSTALL.md
+# TODO: Populate with actual packages/versions
 
 # Core PyTorch and Vision
 torch>=2.0.0

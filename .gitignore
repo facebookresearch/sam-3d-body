@@ -113,9 +113,8 @@ results/
 sandbox/
 debug/
 
-# Project-specific: User-specific tools
+# Project-specific: Local tools
 .sl/
-.snakemake/
 *.lock
 
 # Project-specific: Testing

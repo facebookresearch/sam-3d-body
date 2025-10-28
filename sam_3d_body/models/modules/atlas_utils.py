@@ -1,4 +1,3 @@
-import os
 import os.path as osp
 import pickle
 import math
@@ -9,7 +8,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 import json
 import cv2
-import imageio
 
 def load_json(f):
     with open(f, "r") as ff:
