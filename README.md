@@ -67,7 +67,39 @@
 
 ## Installation
 
-Please see [`INSTALL.md`](./INSTALL.md) for environment installation instructions of SAM 3D Body codebase.
+### Quick Start with PyPI
+
+Install SAM 3D Body from PyPI:
+
+```bash
+pip install sam-3d-body
+```
+
+For visualization support:
+
+```bash
+pip install sam-3d-body[vis]
+```
+
+For all optional features:
+
+```bash
+pip install sam-3d-body[full]
+```
+
+**Note:** Some dependencies (momentum, detectron2, pytorch3d) require git installation. See the [Git Dependencies](#git-dependencies) section below.
+
+### Development Installation
+
+For development or to use the latest features, install from source:
+
+```bash
+git clone https://github.com/facebookresearch/sam-3d-body.git
+cd sam-3d-body
+pip install -e .
+```
+
+For detailed environment setup instructions (CUDA, conda, etc.), please see [`INSTALL.md`](./INSTALL.md).
 
 ## Getting Started
 
@@ -90,11 +122,44 @@ or individually from:
 
 Then SAM 3D Body can be used in a few lines as follows for image prediction.
 
-### Inference Code [TODO: Jinkun Please Double Check on this]
+### Quick Start - Inference
+
+Using the Python API:
 
 ```python
-python demo.py --image_folder path/to/your/images --checkpoint_path path/to/your/model_checkpoint.ckpt
+from sam_3d_body import build_sam_3d_body_model
+
+# Build model from local checkpoint
+model = build_sam_3d_body_model(
+    checkpoint_path="path/to/checkpoint.ckpt",
+    proto_path="path/to/assets",
+    detector_path="path/to/detector"  # optional
+)
+
+# Or download from HuggingFace Hub
+from sam_3d_body import build_sam_3d_body_hf
+model = build_sam_3d_body_hf("facebook/sam-3d-body-large")
+
+# Process an image
+outputs = model.process_one_image("path/to/image.jpg")
+
+# Access results
+for person in outputs:
+    vertices = person["pred_vertices"]
+    keypoints_3d = person["pred_keypoints_3d"]
+    keypoints_2d = person["pred_keypoints_2d"]
 ```
+
+Using the demo script:
+
+```bash
+python examples/demo.py \
+    --image_folder path/to/images \
+    --checkpoint_path path/to/checkpoint.ckpt \
+    --proto_path path/to/assets
+```
+
+See [`examples/README.md`](./examples/README.md) for more details.
 
 ## Web demo for SAM 3D Body [TODO: Xiaoxuan Please Update this]
 
@@ -102,22 +167,25 @@ python demo.py --image_folder path/to/your/images --checkpoint_path path/to/your
 
 < Link to Jupyter Notebook >
 
-## Load from 🤗 Hugging Face [TODO: Devansh and Xiaoxuan Please Update this]
+## Load from 🤗 Hugging Face
 
-Alternatively, models can also be loaded from [Hugging Face](https://huggingface.co/models?search=facebook/sam3d) (requires `pip install huggingface_hub`).
-
-For image prediction [TODO: Update this]:
+Models can be loaded directly from [Hugging Face](https://huggingface.co/models?search=facebook/sam-3d-body) (HuggingFace Hub support is included by default):
 
 ```python
-import torch
-from sam3d.sam3d_image_predictor import SAM3DImagePredictor
+from sam_3d_body import build_sam_3d_body_hf
 
-predictor = SAM3DImagePredictor.from_pretrained("facebook/sam3d-hiera-large")
+# Download and load model from HuggingFace
+model = build_sam_3d_body_hf("facebook/sam-3d-body-large")
 
-with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
-    predictor.set_image(<your_image>)
-    poses, meshes = predictor.predict(<input_prompts>)
+# Process images
+outputs = model.process_one_image("path/to/image.jpg")
 ```
+
+Available models on HuggingFace:
+- `facebook/sam-3d-body-tiny`
+- `facebook/sam-3d-body-small`
+- `facebook/sam-3d-body-base`
+- `facebook/sam-3d-body-large`
 
 ## Model Description
 
@@ -139,6 +207,29 @@ Speed measured on an A100 with `torch 2.5.1, cuda 12.4`. See `benchmark.py` for 
 ## SAM 3D Body Dataset [TODO: Taosha Please Update this]
 
 < Info on the 3D annotations we're releasing >
+
+## Git Dependencies
+
+Some dependencies cannot be installed via PyPI and require git installation:
+
+```bash
+# PyMomentum (required for model architecture)
+pip install git+https://github.com/facebookresearch/momentum@77c3994
+
+# Detectron2 (required for human detection)
+pip install git+https://github.com/facebookresearch/detectron2.git@a1ce2f9
+
+# PyTorch3D (optional, for advanced 3D operations)
+pip install git+https://github.com/facebookresearch/pytorch3d.git@75ebeea
+
+# MoGe (optional, for FOV estimation)
+pip install git+https://github.com/microsoft/MoGe.git
+
+# Flash Attention (optional, for faster inference)
+pip install flash-attn==2.7.3
+```
+
+For a complete setup script, see [`install_git_deps.sh`](./install_git_deps.sh) or refer to [`INSTALL.md`](./INSTALL.md) for detailed environment setup.
 
 ## License
 

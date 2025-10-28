@@ -7,7 +7,7 @@ import numpy as np
 import torch.nn as nn
 import torchvision.transforms.functional as F
 from PIL import Image, ImageOps
-from core.models.modules import to_2tuple
+from sam_3d_body.models.modules import to_2tuple
 
 from .bbox_utils import (
     bbox_cs2xyxy,

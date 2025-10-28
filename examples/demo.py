@@ -12,16 +12,14 @@ root = pyrootutils.setup_root(
     dotenv=True,
 )
 
-from sam3d_body_estimator import SAM3DBodyEstimator
-
+from sam_3d_body import SAM3DBodyEstimator
 from tqdm import tqdm
-
 
 import numpy as np
 import cv2
-from core.visualization.renderer import Renderer
-from core.visualization.skeleton_visualizer import SkeletonVisualizer
-from core.metadata.atlas70 import pose_info as atlas70_pose_info
+from sam_3d_body.visualization.renderer import Renderer
+from sam_3d_body.visualization.skeleton_visualizer import SkeletonVisualizer
+from sam_3d_body.metadata.atlas70 import pose_info as atlas70_pose_info
 
 LIGHT_BLUE = (0.65098039, 0.74117647, 0.85882353)
 
@@ -79,11 +77,6 @@ def visualize_sample(img_cv2, outputs, faces):
     return rend_img
 
 
-DETECTOR_FOLDER = "/large_experiments/3po/model/cascade_mask_rcnn_vitdet"
-# PROTO_PATH = "/large_experiments/3po/model/atlas_250825"
-PROTO_PATH = "/large_experiments/3po/model/atlas_250926_dev2/assets"
-MOGE_PATH = "/private/home/jiawliu/cores/Human-Object/postprocess/MoGe/checkpoints/model.pt"
-
 def main(args):
     if args.output_folder == "":
         output_folder = os.path.join(
@@ -93,11 +86,16 @@ def main(args):
         output_folder = args.output_folder
     os.makedirs(output_folder, exist_ok=True)
 
+    # Use command-line args or environment variables
+    detector_path = args.detector_path or os.environ.get("SAM3D_DETECTOR_PATH", "")
+    proto_path = args.proto_path or os.environ.get("SAM3D_PROTO_PATH", "")
+    moge_path = args.moge_path or os.environ.get("SAM3D_MOGE_PATH", "")
+
     model = SAM3DBodyEstimator(
         checkpoint_path=args.checkpoint_path,
-        proto_path=PROTO_PATH,
-        detector_path=DETECTOR_FOLDER,
-        moge_path=MOGE_PATH,
+        proto_path=proto_path,
+        detector_path=detector_path,
+        moge_path=moge_path,
     )
 
     image_extensions = ['*.jpg', '*.jpeg', '*.png', '*.gif', '*.bmp', '*.tiff', '*.webp']
@@ -115,12 +113,35 @@ def main(args):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='ThreePO Mesh Regressor')
-    parser.add_argument("--image_folder", default="", type=str)
-    parser.add_argument("--output_folder", default="", type=str)
-    parser.add_argument("--checkpoint_path", default="", type=str)
-    parser.add_argument("--bbox_thresh", default=0.8, type=float)
-    parser.add_argument("--use_mask", action="store_true", default=False)
+    parser = argparse.ArgumentParser(
+        description='SAM 3D Body Demo - Single Image Human Mesh Recovery',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python demo.py --image_folder ./images --checkpoint_path ./checkpoints/model.ckpt
+
+Environment Variables:
+  SAM3D_DETECTOR_PATH: Path to detector model folder
+  SAM3D_PROTO_PATH: Path to proto/assets folder
+  SAM3D_MOGE_PATH: Path to MoGe model checkpoint
+        """
+    )
+    parser.add_argument("--image_folder", required=True, type=str,
+                        help="Path to folder containing input images")
+    parser.add_argument("--output_folder", default="", type=str,
+                        help="Path to output folder (default: ./output/<image_folder_name>)")
+    parser.add_argument("--checkpoint_path", required=True, type=str,
+                        help="Path to SAM 3D Body model checkpoint")
+    parser.add_argument("--detector_path", default="", type=str,
+                        help="Path to detector model folder (or set SAM3D_DETECTOR_PATH)")
+    parser.add_argument("--proto_path", default="", type=str,
+                        help="Path to proto/assets folder (or set SAM3D_PROTO_PATH)")
+    parser.add_argument("--moge_path", default="", type=str,
+                        help="Path to MoGe model checkpoint (or set SAM3D_MOGE_PATH)")
+    parser.add_argument("--bbox_thresh", default=0.8, type=float,
+                        help="Bounding box detection threshold")
+    parser.add_argument("--use_mask", action="store_true", default=False,
+                        help="Use SAM2 mask prediction")
     args = parser.parse_args()
 
     main(args)

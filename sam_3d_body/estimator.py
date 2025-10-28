@@ -10,16 +10,16 @@ from detectron2.checkpoint import DetectionCheckpointer
 from detectron2.config import instantiate, LazyConfig
 import detectron2.data.transforms as T
 
-from core.data.utils.io import load_image, resize_image
-from core.models.meta_arch import load_sam3d_body
+from sam_3d_body.data.utils.io import load_image, resize_image
+from sam_3d_body.models.meta_arch import load_sam3d_body
 
-from core.data.transforms import (
+from sam_3d_body.data.transforms import (
     Compose,
     GetBBoxCenterScale,
     TopdownAffine,
     VisionTransformWrapper,
 )
-from core.utils import recursive_to
+from sam_3d_body.utils import recursive_to
 from torch.utils.data import default_collate
 from torchvision.transforms import ToTensor
 from torchvision.transforms.functional import to_tensor

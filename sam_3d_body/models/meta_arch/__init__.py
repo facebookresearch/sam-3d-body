@@ -1,8 +1,8 @@
 import os
-from core.utils.checkpoint import load_state_dict
-from core.utils.config import get_config
+from sam_3d_body.utils.checkpoint import load_state_dict
+from sam_3d_body.utils.config import get_config
 
-# from core.utils.config import get_config
+# from sam_3d_body.utils.config import get_config
 from .sam3d_body import SAM3DBody
 from .sam3d_body_triplet import SAM3DBodyTriplet
 import torch 

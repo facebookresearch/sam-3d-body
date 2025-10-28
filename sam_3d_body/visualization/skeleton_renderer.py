@@ -4,7 +4,7 @@ import trimesh
 from typing import Optional
 from yacs.config import CfgNode
 
-from core.models.modules.geometry_utils import perspective_projection
+from sam_3d_body.models.modules.geometry_utils import perspective_projection
 from .render_openpose import render_openpose
 
 class SkeletonRenderer:

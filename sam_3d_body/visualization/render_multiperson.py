@@ -6,10 +6,10 @@ import numpy as np
 import cv2
 import torch
 import trimesh
-from core.utils.misc import to_numpy
-from core.visualization.utils import draw_box
+from sam_3d_body.utils.misc import to_numpy
+from sam_3d_body.visualization.utils import draw_box
 
-from core.visualization.renderer import Renderer
+from sam_3d_body.visualization.renderer import Renderer
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 LIGHT_BLUE = (0.65098039,  0.74117647,  0.85882353)
