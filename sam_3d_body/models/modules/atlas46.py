@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 
 import roma
-import pymomentum.geometry as pym_geo
+# import pymomentum.geometry as pym_geo
 
 from .atlas_utils import load_pickle, batch6DFromXYZ, get_pose_feats_6d_batched_from_joint_params, SparseLinear, compact_cont_to_model_params_hand
 
