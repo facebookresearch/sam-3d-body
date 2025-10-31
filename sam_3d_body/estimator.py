@@ -228,12 +228,21 @@ class SAM3DBodyEstimator:
         self,
         img: Union[str, np.ndarray],
         bboxes: Optional[np.ndarray] = None,
+        masks: Optional[np.ndarray] = None,
         det_cat_id: int = 0,
         bbox_thr: float = 0.5,
         nms_thr: float = 0.3,
     ):
         """
         Perform model prediction in top-down format: assuming input is a full image.
+        
+        Args:
+            img: Input image (path or numpy array)
+            bboxes: Optional pre-computed bounding boxes
+            masks: Optional pre-computed masks (numpy array). If provided, SAM2 will be skipped.
+            det_cat_id: Detection category ID
+            bbox_thr: Bounding box threshold
+            nms_thr: NMS threshold
         """
 
         # clear all cached results
@@ -279,12 +288,23 @@ class SAM3DBodyEstimator:
         if image_format == "bgr":
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         
-        # Get SAM2 mask if needed
-        masks, masks_score = None, None
-        if self.use_mask:
-            masks, scores = self.run_sam(img, boxes)
+        # Handle masks - either provided externally or generated via SAM2
+        masks_score = None
+        if masks is not None:
+            # Use provided masks - ensure they match the number of detected boxes
+            print(f"Using provided masks: {masks.shape}")
+            if len(masks.shape) == 2:
+                # Single mask - expand to match number of boxes
+                masks = np.expand_dims(masks, axis=0)
+                masks = np.repeat(masks, len(boxes), axis=0)
+            masks_score = np.ones(len(masks), dtype=np.float32)  # Set high confidence for provided masks
+        elif self.use_mask:
+            # Generate masks using SAM2
+            masks, masks_score = self.run_sam(img, boxes)
             # Stress test demo --> use the same bbox for all instances
             boxes = np.concatenate([boxes[:, :2].min(axis=0), boxes[:, 2:].max(axis=0)], axis=0)[None, :].repeat(boxes.shape[0], axis=0)
+        else:
+            masks, masks_score = None, None
     
         #################### Run model inference on an image ####################
 

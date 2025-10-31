@@ -10,7 +10,7 @@
 
 ![SAM 3D Body Model Architecture](assets/model_diagram.png?raw=true)
 
-**SAM 3D Body (3DB)** is a promptable foundation model for single-image 3D human mesh recovery (HMR). Our method emphasizes data quality and diversity to maximize performance, addressing key problems with noisy pseudo-ground-truth meshes commonly used in public datasets. We introduce the XR Body model (XRB), a new parametric mesh representation that decouples skeletal pose and body shape for improved accuracy and interpretability.
+**SAM 3D Body (3DB)** is a robust promptable foundation model for single-image 3D human mesh recovery (HMR). Our method emphasizes data quality and diversity to maximize performance. We utilize the Meta Momentum Human Rig (MoHR), a new parametric mesh representation that decouples skeletal pose and body shape for improved accuracy and interpretability.
 
 3DB employs an encoder-decoder architecture and supports auxiliary prompts, including 2D keypoints and masks, enabling user-guided inference similar to the SAM family of models. We derive high-quality annotations from a multi-stage annotation pipeline using differentiable optimization, multi-view geometry, dense keypoint detection, and a data engine to collect and annotated data covering both common and rare poses across a wide range of viewpoints. Our experiments demonstrate substantial improvements over prior methods, with robust performance on challenging scenarios such as occlusions and rare poses.
 
