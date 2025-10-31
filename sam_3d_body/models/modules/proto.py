@@ -27,31 +27,22 @@ class Proto(nn.Module):
         self.num_hand_pose_comps = num_hand_pose_comps
 
         model_dict = load_pickle(osp.join(model_data_dir, "params.pkl"))
-        self.lbs_fn_infos = nn.ParameterDict({k: nn.Parameter(v.float(), requires_grad=False) for k, v in load_pickle(osp.join(self.model_data_dir, "lbs_fn_infos.pkl")).items()})
         
         self.scale_mean = nn.Parameter(model_dict['scale_mean'], requires_grad=False)
         self.scale_comps = nn.Parameter(model_dict['scale_comps'][:18 + num_hand_scale_comps], requires_grad=False)
         self.faces = nn.Parameter(model_dict['faces']["lod1"], requires_grad=False)
-        self._load_hand_prior()
+        self.hand_pose_mean = nn.Parameter(model_dict['hand_prior_dict']['hand_pose_mean'], requires_grad=False)
+        self.hand_pose_comps = nn.Parameter(model_dict['hand_prior_dict']['hand_pose_comps'][:self.num_hand_pose_comps], requires_grad=False)
+        self.hand_joint_idxs_left = model_dict['hand_prior_dict']['hand_joint_idxs_left']
+        self.hand_joint_idxs_right = model_dict['hand_prior_dict']['hand_joint_idxs_right']
 
         # Load Keypoint Mapping
-        self.keypoint_mapping = nn.Parameter(
-            load_pickle(osp.join(self.model_data_dir, f"lod1_joint_to_kps_v4_fixEyeAndChin.pkl")),
-            requires_grad=False,
-        )
+        self.keypoint_mapping = nn.Parameter(model_dict['keypoint_mapping_dict']['keypoint_mapping'], requires_grad=False)
         self.general_expression_skeleton_kps_dict = model_dict['keypoint_mapping_dict']['general_expression_skeleton_kps_dict']
         self.keypoint_names_308 = model_dict['keypoint_mapping_dict']['keypoint_names_308']
 
         # Load mhr model
         self.mhr_model = torch.jit.load("/private/home/jinhyun1/sam-3d-body/sandbox/mhr_ts.pt", map_location=('cuda' if torch.cuda.is_available() else 'cpu'))
-
-    def _load_hand_prior(self):
-        hand_prior_dict = load_pickle(osp.join(self.model_data_dir, "hand_pose_prior_compact.pkl"))
-
-        self.hand_pose_mean = nn.Parameter(hand_prior_dict['hand_pose_mean'], requires_grad=False)
-        self.hand_pose_comps = nn.Parameter(hand_prior_dict['hand_pose_comps'][:self.num_hand_pose_comps], requires_grad=False)
-        self.hand_joint_idxs_left = hand_prior_dict['hand_joint_idxs_left']
-        self.hand_joint_idxs_right = hand_prior_dict['hand_joint_idxs_right']
 
     def replace_hands_in_pose(self, full_pose_params, hand_pose_params):
         assert full_pose_params.shape[1] == 136
