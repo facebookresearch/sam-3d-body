@@ -185,7 +185,7 @@ class Renderer:
         material = pyrender.MetallicRoughnessMaterial(
             metallicFactor=0.0,
             alphaMode="OPAQUE",
-            baseColorFactor=(*mesh_base_color, 1.0),
+            baseColorFactor=(mesh_base_color[2], mesh_base_color[1], mesh_base_color[0], 1.0),  # Swap RGB to BGR for pyrender
         )
         mesh = trimesh.Trimesh(vertices.copy(), self.faces.copy())
 
