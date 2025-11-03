@@ -126,6 +126,7 @@ class MoHRHead(nn.Module):
         if self.use_torchscript:
             self.mohr = torch.jit.load(os.path.join(atlas_model_path, "mhr_ts.pt"), map_location=('cuda' if torch.cuda.is_available() else 'cpu'))
         else:
+            # TODO: need to be updated
             from MHR.mhr.mhr import MHR
             self.mohr = MHR.from_files(device=torch.device('cuda' if torch.cuda.is_available() else 'cpu'), lod=1)
 
