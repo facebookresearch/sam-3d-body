@@ -46,6 +46,7 @@ class MoHRHead(nn.Module):
         detach_face_for_nonparam_losses: bool = False,
         pred_global_wrist_rot=False,
         replace_local_with_pred_global_wrist_rot=False,
+        use_torchscript=True,
     ):
         super().__init__()
 
@@ -122,8 +123,11 @@ class MoHRHead(nn.Module):
         self.keypoint_names_308 = model_dict['keypoint_mapping_dict']['keypoint_names_308']
 
         # Load MoHR itself
-        self.mohr = torch.jit.load("/private/home/jinhyun1/sam-3d-body/sandbox_old/sandbox/mhr_ts.pt", map_location=('cuda' if torch.cuda.is_available() else 'cpu'))
-        # self.mohr = MHR.from_files(device=torch.device('cuda' if torch.cuda.is_available() else 'cpu'), lod=1)
+        self.use_torchscript = use_torchscript
+        if self.use_torchscript:
+            self.mohr = torch.jit.load("/private/home/jinhyun1/sam-3d-body/sandbox_old/sandbox/mhr_ts.pt", map_location=('cuda' if torch.cuda.is_available() else 'cpu'))
+        else:
+            self.mohr = MHR.from_files(device=torch.device('cuda' if torch.cuda.is_available() else 'cpu'), lod=1)
 
         for param in self.mohr.parameters():
             param.requires_grad = False
@@ -206,9 +210,12 @@ class MoHRHead(nn.Module):
             full_pose_params = self.replace_hands_in_pose(full_pose_params, hand_pose_params)
         model_params = torch.cat([full_pose_params, scales], dim=1)
 
-        curr_skinned_verts = self.mohr(shape_params, model_params, expr_params)
-        joint_params = self.mohr.character_torch.model_parameters_to_joint_parameters(model_params)
-        curr_skel_state = self.mohr.character_torch.joint_parameters_to_skeleton_state(joint_params)
+        if self.self.use_torchscript:
+            curr_skinned_verts, joint_params, curr_skel_state = self.mohr(shape_params, model_params, expr_params)
+        else:
+            curr_skinned_verts = self.mohr(shape_params, model_params, expr_params)
+            joint_params = self.mohr.character_torch.model_parameters_to_joint_parameters(model_params)
+            curr_skel_state = self.mohr.character_torch.joint_parameters_to_skeleton_state(joint_params)
         curr_joint_coords, curr_joint_quats, _ = torch.split(curr_skel_state, [3, 4, 1], dim=2)
         curr_skinned_verts = curr_skinned_verts / 100
         curr_joint_coords = curr_joint_coords / 100
