@@ -3,6 +3,7 @@ import numpy as np
 
 from MHR.mhr.mhr import MHR
 
+# TODO: note this is still WIP
 class MHR3POWrapper(MHR):
     def forward(
         self,
