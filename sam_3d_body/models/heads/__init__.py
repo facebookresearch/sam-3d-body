@@ -1,11 +1,11 @@
 from ..modules import to_2tuple
-from .atlas_head import ATLAS46Head
+from .mohr_head import MoHRHead
 from .camera_head import PerspectiveHead, WeakPerspectiveHead
 
 
 def build_head(cfg, head_type="atlas46"):
     if head_type == "atlas46":
-        return ATLAS46Head(
+        return MoHRHead(
             input_dim=cfg.MODEL.DECODER.DIM,
             mlp_depth=cfg.MODEL.ATLAS_HEAD.get("MLP_DEPTH", 1),
             # num_body_joints=cfg.MODEL.ATLAS_HEAD.NUM_BODY_JOINTS,
