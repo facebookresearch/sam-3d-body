@@ -124,7 +124,7 @@ class MoHRHead(nn.Module):
         # Load MoHR itself
         self.use_torchscript = use_torchscript
         if self.use_torchscript:
-            self.mohr = torch.jit.load("/private/home/jinhyun1/sam-3d-body/sandbox_old/sandbox/mhr_ts.pt", map_location=('cuda' if torch.cuda.is_available() else 'cpu'))
+            self.mohr = torch.jit.load(os.path.join(atlas_model_path, "mhr_ts.pt"), map_location=('cuda' if torch.cuda.is_available() else 'cpu'))
         else:
             from MHR.mhr.mhr import MHR
             self.mohr = MHR.from_files(device=torch.device('cuda' if torch.cuda.is_available() else 'cpu'), lod=1)
