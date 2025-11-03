@@ -6,7 +6,6 @@ import os
 import torch
 import torch.nn as nn
 
-from MHR.mhr.mhr import MHR
 from ..modules import rot6d_to_rotmat
 from ..modules.atlas_utils import (
     atlas46_param_hand_mask,
@@ -127,6 +126,7 @@ class MoHRHead(nn.Module):
         if self.use_torchscript:
             self.mohr = torch.jit.load("/private/home/jinhyun1/sam-3d-body/sandbox_old/sandbox/mhr_ts.pt", map_location=('cuda' if torch.cuda.is_available() else 'cpu'))
         else:
+            from MHR.mhr.mhr import MHR
             self.mohr = MHR.from_files(device=torch.device('cuda' if torch.cuda.is_available() else 'cpu'), lod=1)
 
         for param in self.mohr.parameters():
@@ -210,7 +210,7 @@ class MoHRHead(nn.Module):
             full_pose_params = self.replace_hands_in_pose(full_pose_params, hand_pose_params)
         model_params = torch.cat([full_pose_params, scales], dim=1)
 
-        if self.self.use_torchscript:
+        if self.use_torchscript:
             curr_skinned_verts, joint_params, curr_skel_state = self.mohr(shape_params, model_params, expr_params)
         else:
             curr_skinned_verts = self.mohr(shape_params, model_params, expr_params)
