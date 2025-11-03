@@ -729,7 +729,7 @@ class SAM3DBody(BaseModel):
         return pose_token, pose_output
 
     def get_atlas_output(self, batch, return_keypoints):
-        gt_atlas_output = self.head_pose.atlas(
+        gt_atlas_output = self.head_pose.mohr_forward(
             global_trans=torch.zeros_like(
                 batch["atlas_params"]["global_orient"].squeeze(1)
             ),  # global_trans==0
