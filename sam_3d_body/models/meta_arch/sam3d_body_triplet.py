@@ -95,8 +95,8 @@ class SAM3DBodyTriplet(BaseModel):
         # Create header for pose estimation output
         self.head_pose = build_head(self.cfg, self.cfg.MODEL.PERSON_HEAD.POSE_TYPE)
         if self.cfg.MODEL.get('DISABLE_HAND_PCA', False):
-            self.head_pose.atlas.hand_pose_comps_ori = nn.Parameter(self.head_pose.atlas.hand_pose_comps.clone(), requires_grad=False)
-            self.head_pose.atlas.hand_pose_comps.data = torch.eye(54).to(self.head_pose.atlas.hand_pose_comps.data).float()
+            self.head_pose.hand_pose_comps_ori = nn.Parameter(self.head_pose.hand_pose_comps.clone(), requires_grad=False)
+            self.head_pose.hand_pose_comps.data = torch.eye(54).to(self.head_pose.hand_pose_comps.data).float()
         
         # Initialize pose token with learnable params (not mean pose in SMPL)
         # Note: bias/initial value should be zero-pose in cont, not all-zeros
@@ -816,7 +816,7 @@ class SAM3DBodyTriplet(BaseModel):
         return pose_token, pose_output
 
     def get_atlas_output(self, batch, return_keypoints, return_joint_rotations=False, return_joint_params=False):
-        gt_verts, gt_j3d, gt_rots, gt_joint_params = self.head_pose.atlas(
+        gt_verts, gt_j3d, gt_rots, gt_joint_params = self.head_pose.mohr_forward(
             global_trans=torch.zeros_like(
                 batch["atlas_params"]["global_orient"].squeeze(1)
             ),  # global_trans==0

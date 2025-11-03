@@ -123,7 +123,7 @@ class SAM3DBodyEstimator:
         # Build SAM3D-Body model
         self.model, self.cfg = load_sam3d_body(checkpoint_path, proto_path,use_triplet=True, 
                                                use_twostage_for_hands=True, use_face=use_face)
-        self.faces = self.model.head_pose.atlas.faces.numpy()
+        self.faces = self.model.head_pose.faces.numpy()
         self.model = self.model.to(self.device)
         self.model.eval()
 
