@@ -1,11 +1,11 @@
 __version__ = "1.0.0"
 
-from .sam_3d_body_estimator import SAM3DBodyEstimator
-from .build_models import load_sam_3d_body, load_sam_3d_body_hf
+from .estimator import SAM3DBodyEstimator
+from .build_sam import build_sam_3d_body_model, build_sam_3d_body_hf
 
 __all__ = [
     "__version__",
     "SAM3DBodyEstimator",
-    "load_sam_3d_body",
-    "load_sam_3d_body_hf",
+    "build_sam_3d_body_model",
+    "build_sam_3d_body_hf",
 ]
