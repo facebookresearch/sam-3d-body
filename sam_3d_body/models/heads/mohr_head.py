@@ -109,6 +109,7 @@ class MoHRHead(nn.Module):
         self.num_hand_scale_comps = num_scale_comps - 18
         self.num_hand_pose_comps = num_hand_comps
         model_dict = load_pickle(os.path.join(atlas_model_path, "params.pkl"))
+        self.joint_rotation = nn.Parameter(model_dict['joint_rotation'], requires_grad=False)
         self.scale_mean = nn.Parameter(model_dict['scale_mean'], requires_grad=False)
         self.scale_comps = nn.Parameter(model_dict['scale_comps'][:18 + self.num_hand_scale_comps], requires_grad=False)
         self.faces = nn.Parameter(model_dict['faces']["lod1"], requires_grad=False)
