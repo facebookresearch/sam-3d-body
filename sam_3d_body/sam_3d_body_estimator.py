@@ -151,6 +151,7 @@ class SAM3DBodyEstimator:
                 masks = np.repeat(masks, len(boxes), axis=0)
             masks_score = np.ones(len(masks), dtype=np.float32)  # Set high confidence for provided masks
         elif use_mask and self.sam is not None:
+            print("Running SAM to get mask from bbox...")
             # Generate masks using SAM2
             masks, masks_score = self.sam.run_sam(img, boxes)
             # TODO: clean-up needed, move to notebook

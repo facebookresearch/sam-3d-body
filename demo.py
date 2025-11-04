@@ -81,7 +81,7 @@ def main(args):
     images_list = [image for ext in image_extensions for image in glob(os.path.join(args.image_folder, ext))]
 
     for image_path in tqdm(images_list):
-        outputs = estimator.process_one_image(image_path)
+        outputs = estimator.process_one_image(image_path, use_mask=args.use_mask)
 
         img = cv2.imread(image_path)
         rend_img = visualize_sample(img, outputs, estimator.faces)

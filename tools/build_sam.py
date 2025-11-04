@@ -14,8 +14,8 @@ class HumanSegmentor:
         else:
             raise NotImplementedError
     
-    def run_sam(self, img, **kwargs):
-        return self.sam_func(self.sam, img.to(self.device), **kwargs)
+    def run_sam(self, img, boxes, **kwargs):
+        return self.sam_func(self.sam, img, boxes)
         
 
 def load_sam2(device, path):
