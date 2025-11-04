@@ -39,7 +39,7 @@ class SAM3DBodyEstimator:
         self.sam = human_segmentor
         self.fov_estimator = fov_estimator
 
-        self.faces = self.model.head_pose.atlas.faces.cpu().numpy()
+        self.faces = self.model.head_pose.faces.cpu().numpy()
         self.model.eval()
 
         if self.detector is None:
