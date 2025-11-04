@@ -443,6 +443,20 @@ class SAM3DBodyEstimatorTTA:
                 }
             )
 
+            pred_keypoints_3d_proj = (
+                all_out[-1]["pred_keypoints_3d"] + all_out[-1]["pred_cam_t"]
+            )
+            # pred_keypoints_3d_proj[:, [1, 2]] *= -1
+            pred_keypoints_3d_proj[:, [0, 1]] *= all_out[-1]["focal_length"]
+            pred_keypoints_3d_proj[:, [0, 1]] = (
+                pred_keypoints_3d_proj[:, [0, 1]]
+                + np.array([width / 2, height / 2]) * pred_keypoints_3d_proj[:, [2]]
+            )
+            pred_keypoints_3d_proj[:, :2] = (
+                pred_keypoints_3d_proj[:, :2] / pred_keypoints_3d_proj[:, [2]]
+            )
+            all_out[-1]["pred_keypoints_2d"] = pred_keypoints_3d_proj[:, :2]
+
             if self.cfg.MODEL.NAME == "promptable_threepo_triplet":
                 all_out[-1]["lhand_bbox"] = np.array([
                     (updated_batch['left_center'][idx][0] - updated_batch['left_scale'][idx][0] / 2).item(),
