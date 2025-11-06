@@ -80,6 +80,7 @@ class SAM3DBodyEstimator:
         img: Union[str, np.ndarray],
         bboxes: Optional[np.ndarray] = None,
         masks: Optional[np.ndarray] = None,
+        cam_int: Optional[np.ndarray] = None,
         det_cat_id: int = 0,
         bbox_thr: float = 0.5,
         nms_thr: float = 0.3,
@@ -145,11 +146,10 @@ class SAM3DBodyEstimator:
         if masks is not None:
             # Use provided masks - ensure they match the number of detected boxes
             print(f"Using provided masks: {masks.shape}")
-            if len(masks.shape) == 2:
-                # Single mask - expand to match number of boxes
-                masks = np.expand_dims(masks, axis=0)
-                masks = np.repeat(masks, len(boxes), axis=0)
+            assert bboxes is not None, "Mask-conditioned inference requires bboxes input!"
+            masks = masks.reshape(-1, height, width, 1).astype(np.uint8)
             masks_score = np.ones(len(masks), dtype=np.float32)  # Set high confidence for provided masks
+            use_mask = True
         elif use_mask and self.sam is not None:
             print("Running SAM to get mask from bbox...")
             # Generate masks using SAM2
@@ -216,11 +216,19 @@ class SAM3DBodyEstimator:
         if self.cfg.MODEL.NAME == "promptable_threepo_triplet":
             self.model._initialize_batch(batch)
 
-            if self.fov_estimator is not None:
+            if cam_int is not None:
+                print("Using provided camera intrinsics...")
+                cam_int = cam_int.to(batch["img"])
+                batch["cam_int"] = cam_int.clone()
+            elif self.fov_estimator is not None:
+                print("Running FOV estimator ...")
                 input_image = batch['img_ori'][0].data
-                batch["cam_int"] = self.fov_estimator.get_cam_intrinsics(input_image).to(
+                cam_int = self.fov_estimator.get_cam_intrinsics(input_image).to(
                     batch["img"]
                 )
+                batch["cam_int"] = cam_int.clone()
+            else:
+                cam_int = batch["cam_int"].clone()
 
             pose_output_ab, _ = self.model.forward_step(batch)
             updated_batch = self.model.get_hand_box(pose_output_ab, batch)
