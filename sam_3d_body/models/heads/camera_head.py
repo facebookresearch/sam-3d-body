@@ -132,12 +132,14 @@ class PerspectiveHead(nn.Module):
         mlp_depth: int = 1,
         drop_ratio: float = 0.0,
         mlp_channel_div_factor: int = 8,
+        default_scale_factor: float = 1,
     ):
         super().__init__()
 
         # Metadata to compute 3D skeleton and 2D reprojection
         self.img_size = to_2tuple(img_size)
         self.ncam = 3  # (s, tx, ty)
+        self.default_scale_factor = default_scale_factor
 
         self.proj = FFN(
             embed_dims=input_dim,
@@ -190,7 +192,7 @@ class PerspectiveHead(nn.Module):
         # depth ~= f / s
         # Note that f is in the NDC space (see Zolly section 3.1)
         s, tx, ty = pred_cam[:, 0], pred_cam[:, 1], pred_cam[:, 2]
-        bs = bbox_size * s + 1e-8
+        bs = bbox_size * s * self.default_scale_factor + 1e-8
         focal_length = cam_int[:, 0, 0]
         tz = 2 * focal_length / bs
 

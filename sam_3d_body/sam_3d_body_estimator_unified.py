@@ -1,0 +1,545 @@
+import copy
+from typing import Optional, Union
+
+import numpy as np
+import torch
+import torch.nn.functional as F
+import cv2
+import roma
+
+from sam_3d_body.data.utils.io import load_image
+
+from sam_3d_body.data.transforms import (
+    Compose,
+    GetBBoxCenterScale,
+    TopdownAffine,
+    VisionTransformWrapper,
+)
+from sam_3d_body.utils import recursive_to
+from torch.utils.data import default_collate
+from torchvision.transforms import ToTensor
+
+
+
+class NoCollate:
+    def __init__(self, data):
+        self.data = data
+
+def rotation_angle_difference(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
+    """
+    Compute the angle difference (magnitude) between two batches of SO(3) rotation matrices.
+    Args:
+        A: Tensor of shape (*, 3, 3), batch of rotation matrices.
+        B: Tensor of shape (*, 3, 3), batch of rotation matrices.
+    Returns:
+        Tensor of shape (*,), angle differences in radians.
+    """
+    # Compute relative rotation matrix
+    R_rel = torch.matmul(A, B.transpose(-2, -1))  # (B, 3, 3)
+    # Compute trace of relative rotation
+    trace = R_rel[..., 0, 0] + R_rel[..., 1, 1] + R_rel[..., 2, 2]  # (B,)
+    # Compute angle using the trace formula
+    cos_theta = (trace - 1) / 2
+    # Clamp for numerical stability
+    cos_theta_clamped = torch.clamp(cos_theta, -1.0, 1.0)
+    # Compute angle difference
+    angle = torch.acos(cos_theta_clamped)
+    return angle
+
+class SAM3DBodyEstimatorUnified:
+    def __init__(
+        self,
+        sam_3d_body_model,
+        model_cfg,
+        human_detector = None,
+        human_segmentor = None,
+        fov_estimator = None,
+        prompt_wrists = False,
+    ):
+        self.device = sam_3d_body_model.device
+        self.model, self.cfg = sam_3d_body_model, model_cfg
+        self.detector = human_detector
+        self.sam = human_segmentor
+        self.fov_estimator = fov_estimator
+        self.prompt_wrists = prompt_wrists
+        self.thresh_wrist_angle = 1.1
+
+        self.faces = self.model.head_pose.faces.cpu().numpy()
+        self.model.eval()
+
+        if self.detector is None:
+            print("No human detector is used...")
+        if self.sam is None:
+            print("Mask-condition inference is not supported...")
+        if self.fov_estimator is None:
+            print("No FOV estimator... Using the default FOV!")
+        
+        self.transform = Compose(
+            [
+                GetBBoxCenterScale(),
+                TopdownAffine(input_size=self.cfg.MODEL.IMAGE_SIZE, use_udp=False),
+                VisionTransformWrapper(ToTensor()),
+            ]
+        )
+        
+        self.transform_hand = Compose(
+            [
+                GetBBoxCenterScale(padding=0.9),
+                TopdownAffine(input_size=self.cfg.MODEL.IMAGE_SIZE, use_udp=False),
+                VisionTransformWrapper(ToTensor()),
+            ]
+        )
+
+    def _prepare_batch(
+        self,
+        img,
+        transform,
+        boxes,
+        masks=None,
+        masks_score=None,
+        cam_int=None,
+    ):
+        height, width = img.shape[:2]
+
+        # construct batch data samples
+        data_list = []
+        for idx in range(boxes.shape[0]):
+            data_info = dict(img=img)
+            data_info["bbox"] = boxes[idx]  # shape (4,)
+            data_info["bbox_format"] = "xyxy"
+
+            if masks is not None:
+                data_info["mask"] = masks[idx].copy()
+                if masks_score is not None:
+                    data_info["mask_score"] = masks_score[idx]
+                else:
+                    data_info["mask_score"] = np.array(1.0, dtype=np.float32)
+            else:
+                data_info["mask"] = np.zeros((height, width, 1), dtype=np.uint8)
+                data_info["mask_score"] = np.array(0.0, dtype=np.float32)
+
+            data_list.append(transform(data_info))
+
+        batch = default_collate(data_list)
+
+        max_num_person = batch["img"].shape[0]
+        for key in [
+            "img",
+            "img_size",
+            "ori_img_size",
+            "bbox_center",
+            "bbox_scale",
+            "bbox",
+            "affine_trans",
+            "mask",
+            "mask_score",
+        ]:
+            if key in batch:
+                batch[key] = batch[key].unsqueeze(0).float()
+        if "mask" in batch:
+            batch["mask"] = batch["mask"].unsqueeze(2)
+        batch["person_valid"] = torch.ones((1, max_num_person))
+
+        if cam_int is not None:
+            batch["cam_int"] = cam_int.to(batch["img"])
+        else:
+            batch["cam_int"] = torch.tensor(
+                [[[(height ** 2 + width ** 2) ** 0.5, 0, width / 2.],
+                [0, (height ** 2 + width ** 2) ** 0.5, height / 2.],
+                [0, 0, 1]]],
+            ).to(batch["img"])
+        
+        batch['img_ori'] = [NoCollate(img)]
+        return batch
+
+    @torch.no_grad()
+    def process_one_image(
+        self,
+        img: Union[str, np.ndarray],
+        bboxes: Optional[np.ndarray] = None,
+        masks: Optional[np.ndarray] = None,
+        cam_int: Optional[np.ndarray] = None,
+        det_cat_id: int = 0,
+        bbox_thr: float = 0.5,
+        nms_thr: float = 0.3,
+        use_mask: bool = False,
+    ):
+        """
+        Perform model prediction in top-down format: assuming input is a full image.
+        
+        Args:
+            img: Input image (path or numpy array)
+            bboxes: Optional pre-computed bounding boxes
+            masks: Optional pre-computed masks (numpy array). If provided, SAM2 will be skipped.
+            det_cat_id: Detection category ID
+            bbox_thr: Bounding box threshold
+            nms_thr: NMS threshold
+        """
+
+        # clear all cached results
+        self.batch = None
+        self.image_embeddings = None
+        self.output = None
+        self.prev_prompt = []
+        torch.cuda.empty_cache()
+
+        if type(img) == str:
+            img = load_image(img, backend="cv2", image_format="bgr")
+            image_format = "bgr"
+        else:
+            print ("####### Please make sure the input image is in RGB format")
+            image_format = "rgb"
+        height, width = img.shape[:2]
+
+        if bboxes is not None:
+            boxes = bboxes.reshape(-1, 4)
+            self.is_crop = True
+        elif self.detector is not None:
+            if image_format == "rgb":
+                img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+                image_format = "bgr"
+            print("Running object detector...")
+            boxes = self.detector.run_human_detection(
+                img,
+                det_cat_id=det_cat_id,
+                bbox_thr=bbox_thr,
+                nms_thr=nms_thr,
+                default_to_full_image=False,
+            )
+            self.is_crop = True
+        else:
+            boxes = np.array([0, 0, width, height]).reshape(1, 4)
+            self.is_crop = False
+
+        # If there are no detected humans, don't run prediction
+        if len(boxes) == 0:
+            return []
+
+        # The following models expect RGB images instead of BGR
+        if image_format == "bgr":
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        
+        # Handle masks - either provided externally or generated via SAM2
+        masks_score = None
+        if masks is not None:
+            # Use provided masks - ensure they match the number of detected boxes
+            print(f"Using provided masks: {masks.shape}")
+            assert bboxes is not None, "Mask-conditioned inference requires bboxes input!"
+            masks = masks.reshape(-1, height, width, 1).astype(np.uint8)
+            masks_score = np.ones(len(masks), dtype=np.float32)  # Set high confidence for provided masks
+            use_mask = True
+        elif use_mask and self.sam is not None:
+            print("Running SAM to get mask from bbox...")
+            # Generate masks using SAM2
+            masks, masks_score = self.sam.run_sam(img, boxes)
+            # TODO: clean-up needed, move to notebook
+            # Stress test demo --> use the same bbox for all instances
+            # boxes = np.concatenate([boxes[:, :2].min(axis=0), boxes[:, 2:].max(axis=0)], axis=0)[None, :].repeat(boxes.shape[0], axis=0)
+        else:
+            masks, masks_score = None, None
+
+
+        #################### Construct batch data samples ####################
+        batch = self._prepare_batch(img, self.transform, boxes, masks, masks_score)
+
+        #################### Run model inference on an image ####################
+
+        batch = recursive_to(batch, "cuda")
+        self.model._initialize_batch(batch)
+
+        if cam_int is not None:
+            print("Using provided camera intrinsics...")
+            cam_int = cam_int.to(batch["img"])
+            batch["cam_int"] = cam_int.clone()
+        elif self.fov_estimator is not None:
+            print("Running FOV estimator ...")
+            input_image = batch['img_ori'][0].data
+            cam_int = self.fov_estimator.get_cam_intrinsics(input_image).to(
+                batch["img"]
+            )
+            batch["cam_int"] = cam_int.clone()
+        else:
+            cam_int = batch["cam_int"].clone()
+
+        ## Stage 1: Body
+        self.model.hand_batch_idx = []
+        self.model.body_batch_idx = list(range(batch["img"].shape[1]))
+        self.model.disable_hand = True
+        self.model.disable_body = False
+        pose_output, full_output = self.model.forward_step(batch)
+        ori_local_wrist_rotmat = roma.euler_to_rotmat(
+            "XZY",
+            pose_output['atlas']['body_pose'][:, [41, 43, 42, 31, 33, 32]].unflatten(1, (2, 3))
+        )
+
+        # TODO: Assuming square crop into backbone
+        pred_left_hand_box = pose_output["atlas"]["hand_box"][:, 0].detach().cpu().numpy() * self.cfg.MODEL.IMAGE_SIZE[0]
+        pred_right_hand_box = pose_output["atlas"]["hand_box"][:, 1].detach().cpu().numpy() * self.cfg.MODEL.IMAGE_SIZE[0]
+        pred_left_hand_logits = pose_output["atlas"]["hand_logits"][:, 0].detach().cpu().numpy()
+        pred_right_hand_logits = pose_output["atlas"]["hand_logits"][:, 1].detach().cpu().numpy()
+        
+        # Change boxes into squares
+        batch['left_center'] = pred_left_hand_box[:, :2]
+        batch['left_scale'] = pred_left_hand_box[:, 2:].max(axis=1, keepdims=True).repeat(2, axis=1)
+        batch['right_center'] = pred_right_hand_box[:, :2]
+        batch['right_scale'] = pred_right_hand_box[:, 2:].max(axis=1, keepdims=True).repeat(2, axis=1)
+        
+        # Crop to full. batch["affine_trans"] is full-to-crop, right application
+        batch['left_scale'] = batch['left_scale'] / batch["affine_trans"][0, :, 0, 0].cpu().numpy()[:, None]
+        batch['right_scale'] = batch['right_scale'] / batch["affine_trans"][0, :, 0, 0].cpu().numpy()[:, None]
+        batch['left_center'] = (batch['left_center'] - batch["affine_trans"][0, :, [0, 1], [2, 2]].cpu().numpy()) / batch["affine_trans"][0, :, 0, 0].cpu().numpy()[:, None]
+        batch['right_center'] = (batch['right_center'] - batch["affine_trans"][0, :, [0, 1], [2, 2]].cpu().numpy()) / batch["affine_trans"][0, :, 0, 0].cpu().numpy()[:, None]
+
+        # Stage 3: Re-run with each hand
+        self.model.hand_batch_idx = list(range(batch["img"].shape[1]))
+        self.model.body_batch_idx = []
+        self.model.disable_hand = False
+        self.model.disable_body = True
+        ## Left...
+        left_xyxy = np.concatenate([
+            (batch['left_center'][:, 0] - batch['left_scale'][:, 0] * 1 / 2).reshape(-1, 1),
+            (batch['left_center'][:, 1] - batch['left_scale'][:, 1] * 1 / 2).reshape(-1, 1),
+            (batch['left_center'][:, 0] + batch['left_scale'][:, 0] * 1 / 2).reshape(-1, 1),
+            (batch['left_center'][:, 1] + batch['left_scale'][:, 1] * 1 / 2).reshape(-1, 1),
+        ], axis=1)
+        print("Body, going into left; flipping...", left_xyxy)
+        
+        # Flip image & box
+        flipped_img = img[:, ::-1]
+        tmp = left_xyxy.copy()
+        left_xyxy[:, 0] = width - tmp[:, 2] - 1
+        left_xyxy[:, 2] = width - tmp[:, 0] - 1
+
+        batch_lhand = self._prepare_batch(flipped_img, self.transform_hand, left_xyxy, cam_int=cam_int.clone())
+        batch_lhand = recursive_to(batch_lhand, "cuda")
+        lhand_output = self.model.forward_step(batch_lhand)[0]
+        lhand_output['atlas'] = lhand_output['atlas_hand']
+        
+        # Unflip output
+        ## Flip scale
+        ### Get Proto values
+        scale_r_hands_mean = -0.1798856556415558
+        scale_l_hands_mean = -0.18402963876724243
+        scale_r_hands_std = 0.04739458113908768
+        scale_l_hands_std = 0.04183576628565788
+        ### Apply
+        lhand_output['atlas']['scale'][:, 9] = ((scale_r_hands_mean + scale_r_hands_std * lhand_output['atlas']['scale'][:, 8]) - scale_l_hands_mean) / scale_l_hands_std
+        ## Get the right hand global rotation, flip it, put it in as left.
+        lhand_output['atlas']['joint_global_rots'][:, 78] = lhand_output['atlas']['joint_global_rots'][:, 42].clone()
+        lhand_output['atlas']['joint_global_rots'][:, 78, [1, 2], :] *= -1
+        ### Flip hand pose
+        lhand_output['atlas']['hand'][:, :54] = lhand_output['atlas']['hand'][:, 54:]
+        ### Unflip box
+        batch_lhand['bbox_center'][:, :, 0] = width - batch_lhand['bbox_center'][:, :, 0] - 1
+    
+        ## Right...
+        right_xyxy = np.concatenate([
+            (batch['right_center'][:, 0] - batch['right_scale'][:, 0] * 1 / 2).reshape(-1, 1),
+            (batch['right_center'][:, 1] - batch['right_scale'][:, 1] * 1 / 2).reshape(-1, 1),
+            (batch['right_center'][:, 0] + batch['right_scale'][:, 0] * 1 / 2).reshape(-1, 1),
+            (batch['right_center'][:, 1] + batch['right_scale'][:, 1] * 1 / 2).reshape(-1, 1),
+        ], axis=1)
+        print("Body, going into right...", right_xyxy)
+
+        batch_rhand = self._prepare_batch(img, self.transform_hand, right_xyxy, cam_int=cam_int.clone())
+        batch_rhand = recursive_to(batch_rhand, "cuda")
+        rhand_output = self.model.forward_step(batch_rhand)[0]
+        rhand_output['atlas'] = rhand_output['atlas_hand']
+        
+        if self.prompt_wrists:
+            # TODO: check rotation_angle_difference beforehand.
+            # TODO: Left first or right first? Does it matter?
+            # TODO: Remember, we have keypoint confidences. For hand crops as well.
+            self.model.hand_batch_idx = []
+            self.model.body_batch_idx = list(range(batch["img"].shape[1]))
+            self.model.disable_hand = True
+            self.model.disable_body = False
+            
+            # Get right & left keypoints from crops; full image. Each are B x 1 x 2
+            kps_right_wrist_idx = 41
+            kps_left_wrist_idx = 62
+            right_kps_full = rhand_output['atlas']['pred_keypoints_2d'][:, [kps_right_wrist_idx]].clone()
+            left_kps_full = lhand_output['atlas']['pred_keypoints_2d'][:, [kps_right_wrist_idx]].clone()
+            left_kps_full[:, :, 0] = width - left_kps_full[:, :, 0] - 1 # Flip left hand
+            
+            # Next, get them to crop-normalized space.
+            right_kps_crop = self.model._full_to_crop(batch, right_kps_full)
+            left_kps_crop = self.model._full_to_crop(batch, left_kps_full)
+            
+            # Assemble them into "fake" gt
+            right_left_kps_crop = torch.zeros(right_kps_crop.shape[0], 70, 3).to(right_kps_crop)
+            right_left_kps_crop[:, kps_right_wrist_idx, :2] = right_kps_crop.squeeze(1)
+            right_left_kps_crop[:, kps_left_wrist_idx, :2] = left_kps_crop.squeeze(1)
+            right_left_kps_crop[:, kps_right_wrist_idx, 2] = 1.0
+            right_left_kps_crop[:, kps_left_wrist_idx, 2] = 1.0
+            batch['keypoints_2d'] = right_left_kps_crop[:, None]
+            
+            # Set distance threshold to 0
+            self.model.keypoint_prompt_sampler.distance_thresh = 0.0
+            
+            # Two-step prompting
+            prev_prompt = []
+            full_output = {}
+            pose_output, keypoint_prompt = self.model._one_prompt_iter(
+                batch, pose_output, prev_prompt, full_output
+            )
+            prev_prompt.append(keypoint_prompt.detach())
+            pose_output, keypoint_prompt = self.model._one_prompt_iter(
+                batch, pose_output, prev_prompt, full_output
+            )
+
+        # Drop in hand pose
+        left_hand_pose_params = lhand_output['atlas']['hand'][:, :54]
+        right_hand_pose_params = rhand_output['atlas']['hand'][:, 54:]
+        updated_hand_pose = torch.cat([left_hand_pose_params, right_hand_pose_params], dim=1)
+            
+        # Drop in hand scales
+        updated_scale = pose_output['atlas']['scale'].clone()
+        updated_scale[:, 9] = lhand_output['atlas']['scale'][:, 9]
+        updated_scale[:, 8] = rhand_output['atlas']['scale'][:, 8]
+        updated_scale[:, 18:] = (lhand_output['atlas']['scale'][:, 18:] + rhand_output['atlas']['scale'][:, 18:]) / 2
+        
+        # Update hand shape
+        updated_shape = pose_output['atlas']['shape'].clone()
+        updated_shape[:, 40:] = (lhand_output['atlas']['shape'][:, 40:] + rhand_output['atlas']['shape'][:, 40:]) / 2
+            
+        print("Doing IK...")
+        # First, forward just FK
+        joint_rotations = self.model.head_pose.mohr_forward(
+            global_trans=pose_output['atlas']['global_rot'] * 0,
+            global_rot=pose_output['atlas']['global_rot'],
+            body_pose_params=pose_output['atlas']['body_pose'],
+            hand_pose_params=updated_hand_pose,
+            scale_params=updated_scale,
+            shape_params=updated_shape,
+            expr_params=pose_output['atlas']['face'],
+            return_joint_rotations=True,
+        )[1]
+
+        # Get lowarm
+        lowarm_joint_idxs = torch.LongTensor([76, 40]).cuda() # left, right
+        lowarm_joint_rotations = joint_rotations[:, lowarm_joint_idxs] # B x 2 x 3 x 3
+        
+        # Get zero-wrist pose
+        wrist_twist_joint_idxs = torch.LongTensor([77, 41]).cuda() # left, right
+        wrist_zero_rot_pose = lowarm_joint_rotations @ self.model.head_pose.joint_rotation[wrist_twist_joint_idxs]
+        
+        # Get globals from left & right
+        left_joint_global_rots = lhand_output['atlas']['joint_global_rots']
+        right_joint_global_rots = rhand_output['atlas']['joint_global_rots']
+        pred_global_wrist_rotmat = torch.stack([
+            left_joint_global_rots[:, 78],
+            right_joint_global_rots[:, 42],
+        ], dim=1)
+
+        # Now we want to get the local poses that lead to the wrist being pred_global_wrist_rotmat
+        fused_local_wrist_rotmat = torch.einsum('kabc,kabd->kadc', pred_global_wrist_rotmat, wrist_zero_rot_pose)
+        wrist_xzy = roma.rotmat_to_euler("XZY", fused_local_wrist_rotmat)
+        
+        # Put it in.
+        angle_difference = rotation_angle_difference(ori_local_wrist_rotmat, fused_local_wrist_rotmat) # B x 2 x 3 x3
+        valid_angle = angle_difference < self.thresh_wrist_angle
+        valid_angle = valid_angle.unsqueeze(-1)
+
+        body_pose = pose_output['atlas']['body_pose'][:, [41, 43, 42, 31, 33, 32]].unflatten(1, (2, 3))
+        updated_body_pose = torch.where(valid_angle, wrist_xzy, body_pose)
+        pose_output['atlas']['body_pose'][:, [41, 43, 42, 31, 33, 32]] = updated_body_pose.flatten(1, 2)
+
+        hand_pose = pose_output['atlas']['hand'].unflatten(1, (2, 54))
+        pose_output['atlas']['hand'] = torch.where(valid_angle, updated_hand_pose.unflatten(1, (2, 54)), hand_pose).flatten(1, 2)
+
+        hand_scale = torch.stack([pose_output['atlas']['scale'][:, 9], pose_output['atlas']['scale'][:, 8]], dim=1)
+        updated_hand_scale = torch.stack([updated_scale[:, 9], updated_scale[:, 8]], dim=1)
+        masked_hand_scale = torch.where(valid_angle.squeeze(-1), updated_hand_scale, hand_scale)
+        pose_output['atlas']['scale'][:, 9] = masked_hand_scale[:, 0]
+        pose_output['atlas']['scale'][:, 8] = masked_hand_scale[:, 1]
+        
+        # Replace shared shape and scale
+        pose_output['atlas']['scale'][:, 18:] = torch.where(valid_angle.squeeze(-1).sum(dim=1, keepdim=True) > 0, (
+            lhand_output['atlas']['scale'][:, 18:] * valid_angle.squeeze(-1)[:, [0]] + rhand_output['atlas']['scale'][:, 18:] * valid_angle.squeeze(-1)[:, [1]]
+        ) / (valid_angle.squeeze(-1).sum(dim=1, keepdim=True) + 1e-8), pose_output['atlas']['scale'][:, 18:])
+        pose_output['atlas']['shape'][:, 40:] = torch.where(valid_angle.squeeze(-1).sum(dim=1, keepdim=True) > 0, (
+            lhand_output['atlas']['shape'][:, 40:] * valid_angle.squeeze(-1)[:, [0]] + rhand_output['atlas']['shape'][:, 40:] * valid_angle.squeeze(-1)[:, [1]]
+        ) / (valid_angle.squeeze(-1).sum(dim=1, keepdim=True) + 1e-8), pose_output['atlas']['shape'][:, 40:])
+        
+        print("Done with IK...")
+            
+        # Re-run forward
+        with torch.no_grad():
+            verts, j3d, jcoords, joint_global_rots, joint_params = self.model.head_pose.mohr_forward(
+                global_trans=pose_output['atlas']['global_rot'] * 0,
+                global_rot=pose_output['atlas']['global_rot'],
+                body_pose_params=pose_output['atlas']['body_pose'],
+                hand_pose_params=pose_output['atlas']['hand'],
+                scale_params=pose_output['atlas']['scale'],
+                shape_params=pose_output['atlas']['shape'],
+                expr_params=pose_output['atlas']['face'],
+                return_keypoints=True,
+                return_joint_coords=True,
+                return_joint_rotations=True,
+                return_joint_params=True,
+            )
+            j3d = j3d[:, :70]  # 308 --> 70 keypoints
+            verts[..., [1, 2]] *= -1  # Camera system difference
+            j3d[..., [1, 2]] *= -1  # Camera system difference
+            jcoords[..., [1, 2]] *= -1
+            pose_output['atlas']['pred_keypoints_3d'] = j3d
+            pose_output['atlas']['pred_vertices'] = verts
+            pose_output['atlas']['pred_joint_coords'] = jcoords
+            pose_output['atlas']['pred_pose_raw'][...] = 0
+
+        out = pose_output["atlas"]
+        out = recursive_to(out, "cpu")
+        out = recursive_to(out, "numpy")
+        all_out = []
+        for idx in range(batch["img"].shape[1]):
+            all_out.append(
+                {
+                    "bbox": batch["bbox"][0, idx].cpu().numpy(),
+                    "focal_length": out["focal_length"][idx],
+                    "pred_keypoints_3d": out["pred_keypoints_3d"][idx],
+                    "pred_vertices": out["pred_vertices"][idx],
+                    "pred_cam_t": out["pred_cam_t"][idx],
+                    "pred_keypoints_2d": out["pred_keypoints_2d"][idx],
+                    "pred_pose_raw": out["pred_pose_raw"][idx],
+                    "global_rot": out["global_rot"][idx],
+                    "body_pose_params": out["body_pose"][idx],
+                    "hand_pose_params": out["hand"][idx],
+                    "scale_params": out["scale"][idx],
+                    "shape_params": out["shape"][idx],
+                    "expr_params": out["face"][idx],
+                    "mask": masks[idx] if masks is not None else None,
+                    "pred_joint_coords": out["pred_joint_coords"][idx],
+                    "pred_global_rots": out['joint_global_rots'][idx],
+                    "angle_diff": angle_difference[idx].cpu().numpy(),
+                }
+            )
+
+            pred_keypoints_3d_proj = (
+                all_out[-1]["pred_keypoints_3d"] + all_out[-1]["pred_cam_t"]
+            )
+            # pred_keypoints_3d_proj[:, [1, 2]] *= -1
+            pred_keypoints_3d_proj[:, [0, 1]] *= all_out[-1]["focal_length"]
+            pred_keypoints_3d_proj[:, [0, 1]] = (
+                pred_keypoints_3d_proj[:, [0, 1]]
+                + np.array([width / 2, height / 2]) * pred_keypoints_3d_proj[:, [2]]
+            )
+            pred_keypoints_3d_proj[:, :2] = (
+                pred_keypoints_3d_proj[:, :2] / pred_keypoints_3d_proj[:, [2]]
+            )
+            all_out[-1]["pred_keypoints_2d"] = pred_keypoints_3d_proj[:, :2]
+
+            all_out[-1]["lhand_bbox"] = np.array([
+                (batch_lhand['bbox_center'].flatten(0, 1)[idx][0] - batch_lhand['bbox_scale'].flatten(0, 1)[idx][0] / 2).item(),
+                (batch_lhand['bbox_center'].flatten(0, 1)[idx][1] - batch_lhand['bbox_scale'].flatten(0, 1)[idx][1] / 2).item(),
+                (batch_lhand['bbox_center'].flatten(0, 1)[idx][0] + batch_lhand['bbox_scale'].flatten(0, 1)[idx][0] / 2).item(),
+                (batch_lhand['bbox_center'].flatten(0, 1)[idx][1] + batch_lhand['bbox_scale'].flatten(0, 1)[idx][1] / 2).item(),
+            ])
+            all_out[-1]["rhand_bbox"] = np.array([
+                (batch_rhand['bbox_center'].flatten(0, 1)[idx][0] - batch_rhand['bbox_scale'].flatten(0, 1)[idx][0] / 2).item(),
+                (batch_rhand['bbox_center'].flatten(0, 1)[idx][1] - batch_rhand['bbox_scale'].flatten(0, 1)[idx][1] / 2).item(),
+                (batch_rhand['bbox_center'].flatten(0, 1)[idx][0] + batch_rhand['bbox_scale'].flatten(0, 1)[idx][0] / 2).item(),
+                (batch_rhand['bbox_center'].flatten(0, 1)[idx][1] + batch_rhand['bbox_scale'].flatten(0, 1)[idx][1] / 2).item(),
+            ])
+
+        return all_out

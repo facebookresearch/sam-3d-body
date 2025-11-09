@@ -28,6 +28,19 @@ def create_backbone(name, cfg=None, pretrained=False, drop_path=0.0):
         from .vit_hmr2 import vit_l_512_384_triplet
 
         backbone = vit_l_512_384_triplet(cfg)
+    elif name in [
+        "dinov3_vit7b",
+        "dinov3_vith16plus",
+        "dinov3_vits16",
+        "dinov3_vits16plus",
+        "dinov3_vitb16",
+        "dinov3_vitl16",
+    ]:
+        from .dinov3 import Dinov3Backbone
+
+        backbone = Dinov3Backbone(
+            name, cfg=cfg
+        )
     else:
         raise NotImplementedError("Backbone type is not implemented")
 

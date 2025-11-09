@@ -2,6 +2,7 @@ import os
 import torch
 
 from .models.meta_arch import SAM3DBodyTriplet
+from .models.meta_arch import SAM3DBodyUnified
 from .utils.config import get_config
 from .utils.checkpoint import load_state_dict
 
@@ -26,7 +27,7 @@ def load_sam_3d_body(checkpoint_path: str = "", proto_path: str = ""):
     model_cfg.freeze()
 
     # Initialze the model
-    model = SAM3DBodyTriplet(model_cfg)
+    model = SAM3DBodyUnified(model_cfg)
 
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
     if "state_dict" in checkpoint:

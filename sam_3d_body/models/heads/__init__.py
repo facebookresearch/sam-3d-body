@@ -3,7 +3,7 @@ from .mohr_head import MoHRHead
 from .camera_head import PerspectiveHead, WeakPerspectiveHead
 
 
-def build_head(cfg, head_type="atlas46"):
+def build_head(cfg, head_type="atlas46", enable_hand_model=False, default_scale_factor=1.0):
     if head_type == "atlas46":
         return MoHRHead(
             input_dim=cfg.MODEL.DECODER.DIM,
@@ -41,6 +41,7 @@ def build_head(cfg, head_type="atlas46"):
             replace_local_with_pred_global_wrist_rot=cfg.MODEL.ATLAS_HEAD.get(
                 "REPLACE_LOCAL_WITH_PRED_GLOBAL_WRIST_ROT", False
             ),
+            enable_hand_model=enable_hand_model,
         )
     elif head_type == "weak_perspective":
         return WeakPerspectiveHead(
@@ -55,6 +56,7 @@ def build_head(cfg, head_type="atlas46"):
             mlp_channel_div_factor=cfg.MODEL.get("CAMERA_HEAD", dict()).get(
                 "MLP_CHANNEL_DIV_FACTOR", 8
             ),
+            default_scale_factor=default_scale_factor,
         )
     else:
         raise ValueError("Invalid head type: ", head_type)
