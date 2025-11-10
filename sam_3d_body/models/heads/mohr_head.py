@@ -254,11 +254,15 @@ class MoHRHead(nn.Module):
                 hand_zero_kps = [ 0,  1,  2,  3,  4,  7,  8, 13, 14, 15, 16, 17, 18, 19, 20, 63, 64, 65, 66, 67, 68]
                 to_fix_kps = [5,6,9,10,11,12,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,69]
                 model_keypoints_pred[:, hand_zero_kps] = 0
-                model_keypoints_pred[:, to_fix_kps] = (
-                    roma.euler_to_rotmat('xyz', global_rot_ori)[:, None, :, :]
-                    @ roma.euler_to_rotmat('xyz', global_rot).permute(0, 2, 1)[:, None, :, :]
-                    @ (model_keypoints_pred[:, to_fix_kps, :] - global_trans[:, None, :] - root_coords)[:, :, :, None]
-                    + global_trans_ori[:, None, :, None]).squeeze(3)
+                model_keypoints_pred[:, to_fix_kps] = 0
+                # Wrist too
+                model_keypoints_pred[:, 42] = 0
+
+                # model_keypoints_pred[:, to_fix_kps] = (
+                #     roma.euler_to_rotmat('xyz', global_rot_ori)[:, None, :, :]
+                #     @ roma.euler_to_rotmat('xyz', global_rot).permute(0, 2, 1)[:, None, :, :]
+                #     @ (model_keypoints_pred[:, to_fix_kps, :] - global_trans[:, None, :] - root_coords)[:, :, :, None]
+                #     + global_trans_ori[:, None, :, None]).squeeze(3)
 
             to_return = to_return + [model_keypoints_pred]
         if return_joint_coords:

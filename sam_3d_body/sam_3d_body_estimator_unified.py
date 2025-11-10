@@ -55,6 +55,7 @@ class SAM3DBodyEstimatorUnified:
         human_segmentor = None,
         fov_estimator = None,
         prompt_wrists = False,
+        use_hand_box = False,
     ):
         self.device = sam_3d_body_model.device
         self.model, self.cfg = sam_3d_body_model, model_cfg
@@ -62,6 +63,7 @@ class SAM3DBodyEstimatorUnified:
         self.sam = human_segmentor
         self.fov_estimator = fov_estimator
         self.prompt_wrists = prompt_wrists
+        self.use_hand_box = use_hand_box
         self.thresh_wrist_angle = 1.1
 
         self.faces = self.model.head_pose.faces.cpu().numpy()
@@ -150,6 +152,75 @@ class SAM3DBodyEstimatorUnified:
             ).to(batch["img"])
         
         batch['img_ori'] = [NoCollate(img)]
+        return batch
+
+    def get_hand_box(self, pose_output, batch, scale_factor=None):
+        # get the left and right hand boxes and images from the predictions
+        left_hand_joint_idx = torch.arange(42, 63)  # 21 joints
+        right_hand_joint_idx = torch.arange(21, 42)  # 21 joints
+        left_wrist_idx = 62
+        right_wrist_idx = 41
+
+        # Get hand crops
+        ## First, decode images
+        batch_size, num_person = batch["img"].shape[:2]
+        full_imgs = [
+            img.data for img in batch["img_ori"] for _ in range(num_person)
+        ]  # cv2.imdecode(np.frombuffer(img, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
+        full_imgs_hw = torch.LongTensor(
+            [img.shape[:2] for img in full_imgs]
+        ).numpy()
+
+        if scale_factor is None:
+            scale_factor = 2.0
+            scale_factor = 1.6
+        hand_body_ratio = 0.10
+        square_box = True
+        
+        ## Get hand 2d KPS
+        left_hand_kps_2d = pose_output["atlas"]["pred_keypoints_2d"][
+            :, left_hand_joint_idx
+        ]
+        right_hand_kps_2d = pose_output["atlas"]["pred_keypoints_2d"][
+            :, right_hand_joint_idx
+        ]
+
+        ## Get minmaxes (xy)
+        left_min = left_hand_kps_2d.amin(dim=1).cpu().long().numpy()
+        left_max = left_hand_kps_2d.amax(dim=1).cpu().long().numpy()
+        right_min = right_hand_kps_2d.amin(dim=1).cpu().long().numpy()
+        right_max = right_hand_kps_2d.amax(dim=1).cpu().long().numpy()
+        left_min[:, 0] = np.clip(left_min[:, 0], a_min=0, a_max=full_imgs_hw[:, 1])
+        left_min[:, 1] = np.clip(left_min[:, 1], a_min=0, a_max=full_imgs_hw[:, 0])
+        left_max[:, 0] = np.clip(left_max[:, 0], a_min=0, a_max=full_imgs_hw[:, 1])
+        left_max[:, 1] = np.clip(left_max[:, 1], a_min=0, a_max=full_imgs_hw[:, 0])
+        right_min[:, 0] = np.clip(
+            right_min[:, 0], a_min=0, a_max=full_imgs_hw[:, 1]
+        )
+        right_min[:, 1] = np.clip(
+            right_min[:, 1], a_min=0, a_max=full_imgs_hw[:, 0]
+        )
+        right_max[:, 0] = np.clip(
+            right_max[:, 0], a_min=0, a_max=full_imgs_hw[:, 1]
+        )
+        right_max[:, 1] = np.clip(
+            right_max[:, 1], a_min=0, a_max=full_imgs_hw[:, 0]
+        )
+        ## Get center & scale
+        left_center = (left_max + left_min) / 2
+        right_center = (right_max + right_min) / 2
+        left_scale = (left_max - left_min) * scale_factor
+        right_scale = (right_max - right_min) * scale_factor
+        if square_box:
+            left_scale[...] = left_scale.max(axis=1)[:, None]
+            right_scale[...] = right_scale.max(axis=1)[:, None]
+        ## Stack
+
+        batch['left_scale'] = left_scale
+        batch['left_center'] = left_center
+        batch['right_scale'] = right_scale
+        batch['right_center'] = right_center
+        
         return batch
 
     @torch.no_grad()
@@ -267,28 +338,30 @@ class SAM3DBodyEstimatorUnified:
         self.model.disable_hand = True
         self.model.disable_body = False
         pose_output, full_output = self.model.forward_step(batch)
+        batch = self.get_hand_box(pose_output, batch, scale_factor=None)
         ori_local_wrist_rotmat = roma.euler_to_rotmat(
             "XZY",
             pose_output['atlas']['body_pose'][:, [41, 43, 42, 31, 33, 32]].unflatten(1, (2, 3))
         )
 
-        # TODO: Assuming square crop into backbone
-        pred_left_hand_box = pose_output["atlas"]["hand_box"][:, 0].detach().cpu().numpy() * self.cfg.MODEL.IMAGE_SIZE[0]
-        pred_right_hand_box = pose_output["atlas"]["hand_box"][:, 1].detach().cpu().numpy() * self.cfg.MODEL.IMAGE_SIZE[0]
-        pred_left_hand_logits = pose_output["atlas"]["hand_logits"][:, 0].detach().cpu().numpy()
-        pred_right_hand_logits = pose_output["atlas"]["hand_logits"][:, 1].detach().cpu().numpy()
-        
-        # Change boxes into squares
-        batch['left_center'] = pred_left_hand_box[:, :2]
-        batch['left_scale'] = pred_left_hand_box[:, 2:].max(axis=1, keepdims=True).repeat(2, axis=1)
-        batch['right_center'] = pred_right_hand_box[:, :2]
-        batch['right_scale'] = pred_right_hand_box[:, 2:].max(axis=1, keepdims=True).repeat(2, axis=1)
-        
-        # Crop to full. batch["affine_trans"] is full-to-crop, right application
-        batch['left_scale'] = batch['left_scale'] / batch["affine_trans"][0, :, 0, 0].cpu().numpy()[:, None]
-        batch['right_scale'] = batch['right_scale'] / batch["affine_trans"][0, :, 0, 0].cpu().numpy()[:, None]
-        batch['left_center'] = (batch['left_center'] - batch["affine_trans"][0, :, [0, 1], [2, 2]].cpu().numpy()) / batch["affine_trans"][0, :, 0, 0].cpu().numpy()[:, None]
-        batch['right_center'] = (batch['right_center'] - batch["affine_trans"][0, :, [0, 1], [2, 2]].cpu().numpy()) / batch["affine_trans"][0, :, 0, 0].cpu().numpy()[:, None]
+        if self.use_hand_box:
+            # TODO: Assuming square crop into backbone
+            pred_left_hand_box = pose_output["atlas"]["hand_box"][:, 0].detach().cpu().numpy() * self.cfg.MODEL.IMAGE_SIZE[0]
+            pred_right_hand_box = pose_output["atlas"]["hand_box"][:, 1].detach().cpu().numpy() * self.cfg.MODEL.IMAGE_SIZE[0]
+            pred_left_hand_logits = pose_output["atlas"]["hand_logits"][:, 0].detach().cpu().numpy()
+            pred_right_hand_logits = pose_output["atlas"]["hand_logits"][:, 1].detach().cpu().numpy()
+            
+            # Change boxes into squares
+            batch['left_center'] = pred_left_hand_box[:, :2]
+            batch['left_scale'] = pred_left_hand_box[:, 2:].max(axis=1, keepdims=True).repeat(2, axis=1)
+            batch['right_center'] = pred_right_hand_box[:, :2]
+            batch['right_scale'] = pred_right_hand_box[:, 2:].max(axis=1, keepdims=True).repeat(2, axis=1)
+            
+            # Crop to full. batch["affine_trans"] is full-to-crop, right application
+            batch['left_scale'] = batch['left_scale'] / batch["affine_trans"][0, :, 0, 0].cpu().numpy()[:, None]
+            batch['right_scale'] = batch['right_scale'] / batch["affine_trans"][0, :, 0, 0].cpu().numpy()[:, None]
+            batch['left_center'] = (batch['left_center'] - batch["affine_trans"][0, :, [0, 1], [2, 2]].cpu().numpy()) / batch["affine_trans"][0, :, 0, 0].cpu().numpy()[:, None]
+            batch['right_center'] = (batch['right_center'] - batch["affine_trans"][0, :, [0, 1], [2, 2]].cpu().numpy()) / batch["affine_trans"][0, :, 0, 0].cpu().numpy()[:, None]
 
         # Stage 3: Re-run with each hand
         self.model.hand_batch_idx = list(range(batch["img"].shape[1]))

@@ -763,27 +763,6 @@ class SAM3DBodyUnified(BaseModel):
             token_augment[:, (num_pose_token + 1) :] = prompt_embeddings
             token_mask = None
 
-            assert self.cfg.MODEL.DECODER.get("DO_KEYPOINT_TOKENS", False)
-            # Put in a token for each keypoint
-            kps_emb_start_idx = token_embeddings.shape[1]
-            token_embeddings = torch.cat(
-                [
-                    token_embeddings,
-                    self.keypoint_embedding_hand.weight[None, :, :].repeat(
-                        batch_size, 1, 1
-                    ),
-                ],
-                dim=1,
-            )  # B x 3 + 70 x 1024
-            # No positional embeddings
-            token_augment = torch.cat(
-                [
-                    token_augment,
-                    torch.zeros_like(token_embeddings[:, token_augment.shape[1] :, :]),
-                ],
-                dim=1,
-            )  # B x 3 + 70 x 1024
-
             if self.cfg.MODEL.DECODER.get("DO_HAND_DETECT_TOKENS", False):
                 # Put in a token for each hand
                 hand_det_emb_start_idx = token_embeddings.shape[1]
@@ -806,6 +785,27 @@ class SAM3DBodyUnified(BaseModel):
                     ],
                     dim=1,
                 )  # B x 5 + 70 x 1024
+
+            assert self.cfg.MODEL.DECODER.get("DO_KEYPOINT_TOKENS", False)
+            # Put in a token for each keypoint
+            kps_emb_start_idx = token_embeddings.shape[1]
+            token_embeddings = torch.cat(
+                [
+                    token_embeddings,
+                    self.keypoint_embedding_hand.weight[None, :, :].repeat(
+                        batch_size, 1, 1
+                    ),
+                ],
+                dim=1,
+            )  # B x 3 + 70 x 1024
+            # No positional embeddings
+            token_augment = torch.cat(
+                [
+                    token_augment,
+                    torch.zeros_like(token_embeddings[:, token_augment.shape[1] :, :]),
+                ],
+                dim=1,
+            )  # B x 3 + 70 x 1024
 
             if self.cfg.MODEL.DECODER.get("DO_KEYPOINT3D_TOKENS", False):
                 # Put in a token for each keypoint
