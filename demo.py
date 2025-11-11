@@ -74,7 +74,7 @@ def main(args):
     images_list = sorted([image for ext in image_extensions for image in glob(os.path.join(args.image_folder, ext))])
 
     for image_path in tqdm(images_list):
-        outputs = estimator.process_one_image(image_path, use_mask=args.use_mask)
+        outputs = estimator.process_one_image(image_path, use_mask=args.use_mask, prompt_wrists_type=args.prompt_wrists_type)
 
         img = cv2.imread(image_path)
         rend_img = visualize_sample(img, outputs, estimator.faces)
@@ -123,6 +123,7 @@ Environment Variables:
                         help="Use mask-conditioned prediction")
     parser.add_argument("--prompt_wrists", action="store_true", default=False)
     parser.add_argument("--use_hand_box", action="store_true", default=False)
+    parser.add_argument("--prompt_wrists_type", default="v1", type=str)
     args = parser.parse_args()
 
     main(args)
