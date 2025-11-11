@@ -193,7 +193,7 @@ class MoHRHead(nn.Module):
 
         if self.enable_hand_model:
             # Need to do some stuff to transfer hand coordinates to body
-            right_wrist_coords = torch.FloatTensor([-0.54896080493927, 1.112178087234497, 0.1275579184293747]).cuda()
+            right_wrist_coords = torch.FloatTensor([-0.539864182472229, 1.1133134365081787, 0.1318483203649521]).cuda()
             root_coords = torch.FloatTensor([0.0, 0.9239869713783264, 0.0]).cuda()
             local_to_world_wrist = torch.FloatTensor([
                 [0.6428927779197693, 0.4922248423099518, -0.5868593454360962],
