@@ -64,7 +64,7 @@ class SAM3DBodyEstimatorUnified:
         self.fov_estimator = fov_estimator
         self.prompt_wrists = prompt_wrists
         self.use_hand_box = use_hand_box
-        self.thresh_wrist_angle = 1.1
+        self.thresh_wrist_angle = 1.2   # we used 1.1 before
 
         self.faces = self.model.head_pose.faces.cpu().numpy()
         self.model.eval()
@@ -483,6 +483,11 @@ class SAM3DBodyEstimatorUnified:
                 keypoint_prompt[:, 1, -1] = kps_left_wrist_idx
                 keypoint_prompt[:, 2, -1] = kps_right_elbow_idx
                 keypoint_prompt[:, 3, -1] = kps_left_elbow_idx
+                valid_keypoint = torch.all(
+                    (keypoint_prompt[:, :, :2] > -0.5) & (keypoint_prompt[:, :, :2] < 0.5),
+                    dim=(1, 2)
+                )
+                keypoint_prompt = keypoint_prompt[valid_keypoint]
                 keypoint_prompt[:, :, :2] = torch.clamp(
                     keypoint_prompt[:, :, :2] + 0.5, min=0.0, max=1.0
                 )  # [-0.5, 0.5] --> [0, 1]
