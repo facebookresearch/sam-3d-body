@@ -45,6 +45,7 @@ class MoHRHead(nn.Module):
         detach_face_for_nonparam_losses: bool = False,
         pred_global_wrist_rot=False,
         replace_local_with_pred_global_wrist_rot=False,
+        enable_hand_model=False,
         use_torchscript=True,
     ):
         super().__init__()
@@ -64,6 +65,7 @@ class MoHRHead(nn.Module):
         self.replace_local_with_pred_global_wrist_rot = (
             replace_local_with_pred_global_wrist_rot
         )
+        self.enable_hand_model = enable_hand_model
 
         self.zero_face = zero_face
         self.zero_face_for_nonparam_losses = zero_face_for_nonparam_losses
@@ -188,6 +190,20 @@ class MoHRHead(nn.Module):
         return_joint_params=False,
         scale_offsets=None,
         vertex_offsets=None):
+
+        if self.enable_hand_model:
+            # Need to do some stuff to transfer hand coordinates to body
+            right_wrist_coords = torch.FloatTensor([-0.539864182472229, 1.1133134365081787, 0.1318483203649521]).cuda()
+            root_coords = torch.FloatTensor([0.0, 0.9239869713783264, 0.0]).cuda()
+            local_to_world_wrist = torch.FloatTensor([
+                [0.6428927779197693, 0.4922248423099518, -0.5868593454360962],
+                [-0.6405355930328369, 0.7656170129776001, -0.059537410736083984],
+                [0.4200035333633423, 0.4141804277896881, 0.8074971437454224]]).cuda()
+
+            global_rot_ori = global_rot.clone()
+            global_trans_ori = global_trans.clone()
+            global_rot = roma.rotmat_to_euler('xyz', roma.euler_to_rotmat('xyz', global_rot_ori) @ local_to_world_wrist)
+            global_trans = -(roma.euler_to_rotmat('xyz', global_rot) @ (right_wrist_coords - root_coords) + root_coords) + global_trans_ori
         
         if body_pose_params.shape[-1] == 133:
             body_pose_params = body_pose_params[..., :130]
@@ -212,6 +228,10 @@ class MoHRHead(nn.Module):
             full_pose_params = self.replace_hands_in_pose(full_pose_params, hand_pose_params)
         model_params = torch.cat([full_pose_params, scales], dim=1)
 
+        if self.enable_hand_model:
+            nonhand_param_idxs = [6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,95,96,97,98,99,100,101,102,103,104,105,106,107,108,109,110,111,112,113,114,115,116,117,118,119,120,121,122,123,124,125,126,127,128,129,130,131,132,133,134,135,136,137,138,139,140,141,142,143,145,146,147,148,149,150,151,152,153,179,180,181,182,183,184,185,186,187,188,189,190,191,192,193,194,195,196,197,198,199,200,201,202,203]
+            model_params[:, nonhand_param_idxs] = 0
+
         if self.use_torchscript:
             curr_skinned_verts, joint_params, curr_skel_state = self.mohr(shape_params, model_params, expr_params)
         else:
@@ -229,6 +249,21 @@ class MoHRHead(nn.Module):
             # Get sapiens 308 keypoints
             model_vert_joints = torch.cat([curr_skinned_verts, curr_joint_coords], dim=1) # B x (num_verts + 127) x 3
             model_keypoints_pred = (self.keypoint_mapping @ model_vert_joints.permute(1, 0, 2).flatten(1, 2)).reshape(-1, model_vert_joints.shape[0], 3).permute(1, 0, 2)
+
+            if self.enable_hand_model:
+                hand_zero_kps = [ 0,  1,  2,  3,  4,  7,  8, 13, 14, 15, 16, 17, 18, 19, 20, 63, 64, 65, 66, 67, 68]
+                to_fix_kps = [5,6,9,10,11,12,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,69]
+                model_keypoints_pred[:, hand_zero_kps] = 0
+                model_keypoints_pred[:, to_fix_kps] = 0
+                # Wrist too
+                model_keypoints_pred[:, 42] = 0
+
+                # model_keypoints_pred[:, to_fix_kps] = (
+                #     roma.euler_to_rotmat('xyz', global_rot_ori)[:, None, :, :]
+                #     @ roma.euler_to_rotmat('xyz', global_rot).permute(0, 2, 1)[:, None, :, :]
+                #     @ (model_keypoints_pred[:, to_fix_kps, :] - global_trans[:, None, :] - root_coords)[:, :, :, None]
+                #     + global_trans_ori[:, None, :, None]).squeeze(3)
+
             to_return = to_return + [model_keypoints_pred]
         if return_joint_coords:
             to_return = to_return + [curr_joint_coords]
@@ -311,50 +346,6 @@ class MoHRHead(nn.Module):
             pred_face_for_forward = pred_face_for_forward * 0
         if self.detach_face_for_nonparam_losses:
             pred_face_for_forward = pred_face_for_forward.detach()
-
-        ################################################################################################################################################
-        if self.replace_local_with_pred_global_wrist_rot:
-            assert False, "Not Updated Yet"
-            # First, forward just FK
-            self.atlas.lbs_fn.fk_only = True
-            joint_rotations = self.atlas(
-                global_trans=global_trans,  # global_trans==0
-                global_rot=global_rot_euler,
-                body_pose_params=pred_pose_euler,  # Drop jaw
-                hand_pose_params=pred_hand,
-                scale_params=pred_scale,
-                shape_params=pred_shape,
-                expr_params=pred_face_for_forward,
-                do_pcblend=do_pcblend,
-            )[1]
-            self.atlas.lbs_fn.fk_only = False
-
-            # Get lowarm
-            lowarm_joint_idxs = torch.LongTensor([76, 40]).cuda()  # left, right
-            lowarm_joint_rotations = joint_rotations[
-                :, lowarm_joint_idxs
-            ]  # B x 2 x 3 x 3
-
-            # Get zero-wrist pose
-            wrist_twist_joint_idxs = torch.LongTensor([77, 41]).cuda()  # left, right
-            wrist_zero_rot_pose = (
-                lowarm_joint_rotations
-                @ self.atlas.lbs_fn.joint_rotation[wrist_twist_joint_idxs]
-            )
-
-            # Now we want to get the local poses that lead to the wrist being pred_global_wrist_rotmat
-            fused_local_wrist_rotmat = torch.einsum(
-                "kabc,kabd->kadc", pred_global_wrist_rotmat, wrist_zero_rot_pose
-            )
-            wrist_xzy = roma.rotmat_to_euler("XZY", fused_local_wrist_rotmat).flatten(
-                1, 2
-            )
-
-            # Put it in.
-            pred_pose_euler = pred_pose_euler.clone()
-            pred_pose_euler[:, [41, 43, 42, 31, 33, 32]] = wrist_xzy
-
-        ################################################################################################################################################
 
         # Run everything through atlas
         output = self.mohr_forward(

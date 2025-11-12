@@ -30,6 +30,36 @@ def visualize_sample(img_cv2, outputs, faces):
             2,
         )
 
+        if "lhand_bbox" in person_output:
+            img1 = cv2.rectangle(
+                img1,
+                (
+                    int(person_output["lhand_bbox"][0]),
+                    int(person_output["lhand_bbox"][1]),
+                ),
+                (
+                    int(person_output["lhand_bbox"][2]),
+                    int(person_output["lhand_bbox"][3]),
+                ),
+                (255, 0, 0),
+                2,
+            )
+
+        if "rhand_bbox" in person_output:
+            img1 = cv2.rectangle(
+                img1,
+                (
+                    int(person_output["rhand_bbox"][0]),
+                    int(person_output["rhand_bbox"][1]),
+                ),
+                (
+                    int(person_output["rhand_bbox"][2]),
+                    int(person_output["rhand_bbox"][3]),
+                ),
+                (0, 0, 255),
+                2,
+            )
+
         renderer = Renderer(focal_length=person_output["focal_length"], faces=faces)
         img2 = (
             renderer(

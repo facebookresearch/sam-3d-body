@@ -16,7 +16,7 @@ import cv2
 import numpy as np
 import torch
 
-from sam_3d_body import load_sam_3d_body, SAM3DBodyEstimator, SAM3DBodyEstimatorTTA
+from sam_3d_body import load_sam_3d_body, SAM3DBodyEstimator, SAM3DBodyEstimatorTTA, SAM3DBodyEstimatorUnified
 from tools.vis_utils import visualize_sample
 
 
@@ -60,28 +60,21 @@ def main(args):
             name=args.fov_name, device=device, path=fov_path
         )
 
-    if not args.use_tta:
-        estimator = SAM3DBodyEstimator(
-            sam_3d_body_model=model,
-            model_cfg=model_cfg,
-            human_detector=human_detector,
-            human_segmentor=human_segmentor,
-            fov_estimator=fov_estimator,
-        )
-    else:
-        estimator = SAM3DBodyEstimatorTTA(
-            sam_3d_body_model=model,
-            model_cfg=model_cfg,
-            human_detector=human_detector,
-            human_segmentor=human_segmentor,
-            fov_estimator=fov_estimator,
-        )
+    estimator = SAM3DBodyEstimatorUnified(
+        sam_3d_body_model=model,
+        model_cfg=model_cfg,
+        human_detector=human_detector,
+        human_segmentor=human_segmentor,
+        fov_estimator=fov_estimator,
+        prompt_wrists=(not args.no_prompt_wrists),
+        use_hand_box=(not args.no_hand_detection),
+    )
 
     image_extensions = ['*.jpg', '*.jpeg', '*.png', '*.gif', '*.bmp', '*.tiff', '*.webp']
-    images_list = [image for ext in image_extensions for image in glob(os.path.join(args.image_folder, ext))]
+    images_list = sorted([image for ext in image_extensions for image in glob(os.path.join(args.image_folder, ext))])
 
     for image_path in tqdm(images_list):
-        outputs = estimator.process_one_image(image_path, use_mask=args.use_mask)
+        outputs = estimator.process_one_image(image_path, use_mask=args.use_mask, prompt_wrists_type=args.prompt_wrists_type)
 
         img = cv2.imread(image_path)
         rend_img = visualize_sample(img, outputs, estimator.faces)
@@ -128,7 +121,9 @@ Environment Variables:
                         help="Bounding box detection threshold")
     parser.add_argument("--use_mask", action="store_true", default=False,
                         help="Use mask-conditioned prediction")
-    parser.add_argument("--use_tta", action="store_true", default=False)
+    parser.add_argument("--no_prompt_wrists", action="store_true", default=False)
+    parser.add_argument("--no_hand_detection", action="store_true", default=False)
+    parser.add_argument("--prompt_wrists_type", default="v3", type=str)
     args = parser.parse_args()
 
     main(args)
