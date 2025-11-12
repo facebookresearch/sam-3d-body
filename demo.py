@@ -66,8 +66,8 @@ def main(args):
         human_detector=human_detector,
         human_segmentor=human_segmentor,
         fov_estimator=fov_estimator,
-        prompt_wrists=args.prompt_wrists,
-        use_hand_box=args.use_hand_box,
+        prompt_wrists=(not args.no_prompt_wrists),
+        use_hand_box=(not args.no_hand_detection),
     )
 
     image_extensions = ['*.jpg', '*.jpeg', '*.png', '*.gif', '*.bmp', '*.tiff', '*.webp']
@@ -121,9 +121,9 @@ Environment Variables:
                         help="Bounding box detection threshold")
     parser.add_argument("--use_mask", action="store_true", default=False,
                         help="Use mask-conditioned prediction")
-    parser.add_argument("--prompt_wrists", action="store_true", default=False)
-    parser.add_argument("--use_hand_box", action="store_true", default=False)
-    parser.add_argument("--prompt_wrists_type", default="v1", type=str)
+    parser.add_argument("--no_prompt_wrists", action="store_true", default=False)
+    parser.add_argument("--no_hand_detection", action="store_true", default=False)
+    parser.add_argument("--prompt_wrists_type", default="v3", type=str)
     args = parser.parse_args()
 
     main(args)
