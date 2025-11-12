@@ -54,8 +54,8 @@ class SAM3DBodyEstimatorUnified:
         human_detector = None,
         human_segmentor = None,
         fov_estimator = None,
-        prompt_wrists = False,
-        use_hand_box = False,
+        prompt_wrists = True,
+        use_hand_box = True,
     ):
         self.device = sam_3d_body_model.device
         self.model, self.cfg = sam_3d_body_model, model_cfg
@@ -234,7 +234,7 @@ class SAM3DBodyEstimatorUnified:
         bbox_thr: float = 0.5,
         nms_thr: float = 0.3,
         use_mask: bool = False,
-        prompt_wrists_type: str = "v1",
+        prompt_wrists_type: str = "v3",
     ):
         """
         Perform model prediction in top-down format: assuming input is a full image.
