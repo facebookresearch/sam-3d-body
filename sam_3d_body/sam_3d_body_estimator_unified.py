@@ -483,16 +483,34 @@ class SAM3DBodyEstimatorUnified:
                 keypoint_prompt[:, 1, -1] = kps_left_wrist_idx
                 keypoint_prompt[:, 2, -1] = kps_right_elbow_idx
                 keypoint_prompt[:, 3, -1] = kps_left_elbow_idx
-                valid_keypoint = torch.all(
-                    (keypoint_prompt[:, :, :2] > -0.5) & (keypoint_prompt[:, :, :2] < 0.5),
-                    dim=(1, 2)
-                )
-                keypoint_prompt = keypoint_prompt[valid_keypoint]
-                keypoint_prompt[:, :, :2] = torch.clamp(
-                    keypoint_prompt[:, :, :2] + 0.5, min=0.0, max=1.0
-                )  # [-0.5, 0.5] --> [0, 1]
-            
-                pose_output, _ = self._prompt_wrists(batch, pose_output, keypoint_prompt)
+                
+                if keypoint_prompt.shape[0] > 1:
+                    # Replace invalid keypoints to dummy prompts
+                    invalid_prompt = (
+                        (keypoint_prompt[..., 0] < -0.5) |
+                        (keypoint_prompt[..., 0] > 0.5) |
+                        (keypoint_prompt[..., 1] < -0.5) |
+                        (keypoint_prompt[..., 1] > 0.5)
+                    ).unsqueeze(-1)
+                    dummy_prompt = torch.zeros((1, 1, 3)).to(keypoint_prompt)
+                    dummy_prompt[:, :, -1] = -2
+                    keypoint_prompt[:, :, :2] = torch.clamp(
+                        keypoint_prompt[:, :, :2] + 0.5, min=0.0, max=1.0
+                    )  # [-0.5, 0.5] --> [0, 1]
+                    keypoint_prompt = torch.where(invalid_prompt, dummy_prompt, keypoint_prompt)
+                else:
+                    # Only keep valid keypoints
+                    valid_keypoint = torch.all(
+                        (keypoint_prompt[:, :, :2] > -0.5) & (keypoint_prompt[:, :, :2] < 0.5),
+                        dim=2
+                    ).squeeze()
+                    keypoint_prompt = keypoint_prompt[:, valid_keypoint]
+                    keypoint_prompt[:, :, :2] = torch.clamp(
+                        keypoint_prompt[:, :, :2] + 0.5, min=0.0, max=1.0
+                    )  # [-0.5, 0.5] --> [0, 1]
+                
+                if len(keypoint_prompt):
+                    pose_output, _ = self._prompt_wrists(batch, pose_output, keypoint_prompt)
             
             elif prompt_wrists_type == "v2":
                 ## TODO: only prompt valid wrists
