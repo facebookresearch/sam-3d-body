@@ -1,5 +1,5 @@
 from ..modules import to_2tuple
-from .mohr_head import MoHRHead
+from .mhr_head import MoHRHead
 from .camera_head import PerspectiveHead, WeakPerspectiveHead
 
 

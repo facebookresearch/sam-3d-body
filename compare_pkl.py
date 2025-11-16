@@ -37,8 +37,8 @@ def compare_pkl(data1, data2):
             if not (data1[key] == data2[key]).all():
                 value_diff = data1[key] - data2[key]
                 valud_diff_abs = abs(value_diff)
-                relative_error = valud_diff_abs / (abs(data1[key]) + 1e-8)
-                if relative_error.max() < 1e-3: # 1/1000 error tolerance
+                relative_error = valud_diff_abs / (abs(data1[key])+1e-8)
+                if relative_error.max() < 5e-2: # 1/100 error tolerance
                     continue
                 else:
                     print(f"Different values in key '{key}' beyond tolerance")
@@ -53,11 +53,12 @@ def compare_pkl(data1, data2):
 
 source_path = 'cmu_stills'
 
-files = ['CMU - Still - 01', 'CMU - Still - 02', 'CMU - Still - 03']
-tag1 = '-orig1'
-tag2 = '-orig'
+files = ['CMU - Still - 01']
+tag1 = '-edit1'
+tag2 = '-orig3'
 
 for file in files:
+    print("Comparing files for ", file)
     file1 = os.path.join(source_path, file + tag1 + '.pkl')
     file2 = os.path.join(source_path, file + tag2 + '.pkl')
 

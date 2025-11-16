@@ -16,7 +16,7 @@ import cv2
 import numpy as np
 import torch
 import joblib 
-from sam_3d_body import load_sam_3d_body, SAM3DBodyEstimator, SAM3DBodyEstimatorTTA, SAM3DBodyEstimatorUnified
+from sam_3d_body import load_sam_3d_body, SAM3DBodyEstimatorUnified
 from tools.vis_utils import visualize_sample
 
 
@@ -31,15 +31,16 @@ def main(args):
     os.makedirs(output_folder, exist_ok=True)
 
     # Use command-line args or environment variables
-    mohr_path = args.mohr_path or os.environ.get("SAM3D_MOHR_PATH", "")
+    mhr_path = args.mhr_path or os.environ.get("SAM3D_mhr_path", "")
     detector_path = args.detector_path or os.environ.get("SAM3D_DETECTOR_PATH", "")
     segmentor_path = args.segmentor_path or os.environ.get("SAM3D_SEGMENTOR_PATH", "")
     fov_path = args.fov_path or os.environ.get("SAM3D_FOV_PATH", "")
 
     # Initialize sam-3d-body model and other optional modules
     device = (torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'))
-    model, model_cfg = load_sam_3d_body(args.checkpoint_path, mohr_path)
+    model, model_cfg = load_sam_3d_body(args.checkpoint_path, mhr_path)
     model = model.to(device)
+    model = model.eval()
 
     human_detector, human_segmentor, fov_estimator = None, None, None
     if len(detector_path):
@@ -74,8 +75,8 @@ def main(args):
     image_extensions = ['*.jpg', '*.jpeg', '*.png', '*.gif', '*.bmp', '*.tiff', '*.webp']
     images_list = sorted([image for ext in image_extensions for image in glob(os.path.join(args.image_folder, ext))])
 
-    tag = "orig1"
-    for image_path in tqdm(images_list):
+    tag = "edit1"
+    for image_path in tqdm(images_list[:1]):
         outputs = estimator.process_one_image(image_path, use_mask=args.use_mask, prompt_wrists_type=args.prompt_wrists_type)
 
         image_name = image_path.split('/')[-1]
@@ -93,15 +94,15 @@ if __name__ == "__main__":
         description='SAM 3D Body Demo - Single Image Human Mesh Recovery',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Examples:
-  python demo.py --image_folder ./images --checkpoint_path ./checkpoints/model.ckpt
+                Examples:
+                python demo.py --image_folder ./images --checkpoint_path ./checkpoints/model.ckpt
 
-Environment Variables:
-  SAM3D_MOHR_PATH: Path to MoHR/assets folder
-  SAM3D_DETECTOR_PATH: Path to human detection model folder
-  SAM3D_SEGMENTOR_PATH: Path to human segmentation model folder
-  SAM3D_FOV_PATH: Path to fov estimation model folder
-        """
+                Environment Variables:
+                SAM3D_mhr_path: Path to MoHR/assets folder
+                SAM3D_DETECTOR_PATH: Path to human detection model folder
+                SAM3D_SEGMENTOR_PATH: Path to human segmentation model folder
+                SAM3D_FOV_PATH: Path to fov estimation model folder
+                """
     )
     parser.add_argument("--image_folder", required=True, type=str,
                         help="Path to folder containing input images")
@@ -121,8 +122,8 @@ Environment Variables:
                         help="Path to human segmentation model folder (or set SAM3D_SEGMENTOR_PATH)")
     parser.add_argument("--fov_path", default="", type=str,
                         help="Path to fov estimation model folder (or set SAM3D_FOV_PATH)")
-    parser.add_argument("--mohr_path", default="", type=str,
-                        help="Path to MoHR/assets folder (or set SAM3D_MOHR_PATH)")
+    parser.add_argument("--mhr_path", default="", type=str,
+                        help="Path to MoHR/assets folder (or set SAM3D_mhr_path)")
     parser.add_argument("--bbox_thresh", default=0.8, type=float,
                         help="Bounding box detection threshold")
     parser.add_argument("--use_mask", action="store_true", default=False,

@@ -46,5 +46,5 @@ def _hf_download(repo_id):
 
 
 def load_sam_3d_body_hf(repo_id, **kwargs):
-    ckpt_path, mohr_path = _hf_download(repo_id)
-    return load_sam_3d_body(checkpoint_path=ckpt_path, proto_path=mohr_path)
+    ckpt_path, mhr_path = _hf_download(repo_id)
+    return load_sam_3d_body(checkpoint_path=ckpt_path, proto_path=mhr_path)

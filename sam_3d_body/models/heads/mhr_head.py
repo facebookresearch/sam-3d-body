@@ -17,7 +17,7 @@ from ..modules.atlas_utils import (
 
 from ..modules.transformer import FFN
 
-class MoHRHead(nn.Module):
+class MHRHead(nn.Module):
 
     def __init__(
         self,

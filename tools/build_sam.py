@@ -11,6 +11,7 @@ class HumanSegmentor:
             print("########### Using human segmentor: SAM2...")
             self.sam = load_sam2(device, **kwargs)
             self.sam_func = run_sam2
+
         else:
             raise NotImplementedError
     
@@ -28,6 +29,8 @@ def load_sam2(device, path):
     from sam2.sam2_image_predictor import SAM2ImagePredictor
 
     predictor = SAM2ImagePredictor(build_sam2(model_cfg, checkpoint, device=device))
+    predictor.model.eval()
+
     return predictor
 
 

@@ -67,7 +67,6 @@ class SAM3DBodyEstimatorUnified:
         self.thresh_wrist_angle = 1.2   # we used 1.1 before
 
         self.faces = self.model.head_pose.faces.cpu().numpy()
-        self.model.eval()
 
         if self.detector is None:
             print("No human detector is used...")
@@ -278,6 +277,7 @@ class SAM3DBodyEstimatorUnified:
                 nms_thr=nms_thr,
                 default_to_full_image=False,
             )
+            print("Found boxes:", boxes)
             self.is_crop = True
         else:
             boxes = np.array([0, 0, width, height]).reshape(1, 4)
