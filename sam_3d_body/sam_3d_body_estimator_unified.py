@@ -545,7 +545,7 @@ class SAM3DBodyEstimatorUnified:
             
         print("Doing IK...")
         # First, forward just FK
-        joint_rotations = self.model.head_pose.mohr_forward(
+        joint_rotations = self.model.head_pose.mhr_forward(
             global_trans=pose_output['atlas']['global_rot'] * 0,
             global_rot=pose_output['atlas']['global_rot'],
             body_pose_params=pose_output['atlas']['body_pose'],
@@ -606,7 +606,7 @@ class SAM3DBodyEstimatorUnified:
             
         # Re-run forward
         with torch.no_grad():
-            verts, j3d, jcoords, joint_global_rots, joint_params = self.model.head_pose.mohr_forward(
+            verts, j3d, jcoords, joint_global_rots, joint_params = self.model.head_pose.mhr_forward(
                 global_trans=pose_output['atlas']['global_rot'] * 0,
                 global_rot=pose_output['atlas']['global_rot'],
                 body_pose_params=pose_output['atlas']['body_pose'],

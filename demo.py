@@ -75,8 +75,8 @@ def main(args):
     image_extensions = ['*.jpg', '*.jpeg', '*.png', '*.gif', '*.bmp', '*.tiff', '*.webp']
     images_list = sorted([image for ext in image_extensions for image in glob(os.path.join(args.image_folder, ext))])
 
-    tag = "edit1"
-    for image_path in tqdm(images_list[:1]):
+    tag = "edit3"
+    for image_path in tqdm(images_list):
         outputs = estimator.process_one_image(image_path, use_mask=args.use_mask, prompt_wrists_type=args.prompt_wrists_type)
 
         image_name = image_path.split('/')[-1]

@@ -106,7 +106,7 @@ class MHRHead(nn.Module):
 
         self.mesh_type = mesh_type
 
-        # Load scale & hand stuff for MoHR
+        # Load scale & hand stuff for HMR
         self.model_data_dir = atlas_model_path
         self.num_hand_scale_comps = num_scale_comps - 18
         self.num_hand_pose_comps = num_hand_comps
@@ -124,16 +124,16 @@ class MHRHead(nn.Module):
         self.general_expression_skeleton_kps_dict = model_dict['keypoint_mapping_dict']['general_expression_skeleton_kps_dict']
         self.keypoint_names_308 = model_dict['keypoint_mapping_dict']['keypoint_names_308']
 
-        # Load MoHR itself
+        # Load MHR itself
         self.use_torchscript = use_torchscript
         if self.use_torchscript:
-            self.mohr = torch.jit.load(os.path.join(atlas_model_path, "mhr_ts.pt"), map_location=('cuda' if torch.cuda.is_available() else 'cpu'))
+            self.mhr = torch.jit.load(os.path.join(atlas_model_path, "mhr_ts.pt"), map_location=('cuda' if torch.cuda.is_available() else 'cpu'))
         else:
             # TODO: need to be updated
             from MHR.mhr.mhr import MHR
-            self.mohr = MHR.from_files(device=torch.device('cuda' if torch.cuda.is_available() else 'cpu'), lod=1)
+            self.mhr = MHR.from_files(device=torch.device('cuda' if torch.cuda.is_available() else 'cpu'), lod=1)
 
-        for param in self.mohr.parameters():
+        for param in self.mhr.parameters():
             param.requires_grad = False
 
 
@@ -173,7 +173,7 @@ class MHRHead(nn.Module):
 
         return full_pose_params # B x 207
 
-    def mohr_forward(
+    def mhr_forward(
         self,
         global_trans,
         global_rot,
@@ -233,11 +233,11 @@ class MHRHead(nn.Module):
             model_params[:, nonhand_param_idxs] = 0
 
         if self.use_torchscript:
-            curr_skinned_verts, joint_params, curr_skel_state = self.mohr(shape_params, model_params, expr_params)
+            curr_skinned_verts, joint_params, curr_skel_state = self.mhr(shape_params, model_params, expr_params)
         else:
-            curr_skinned_verts = self.mohr(shape_params, model_params, expr_params)
-            joint_params = self.mohr.character_torch.model_parameters_to_joint_parameters(model_params)
-            curr_skel_state = self.mohr.character_torch.joint_parameters_to_skeleton_state(joint_params)
+            curr_skinned_verts = self.mhr(shape_params, model_params, expr_params)
+            joint_params = self.mhr.character_torch.model_parameters_to_joint_parameters(model_params)
+            curr_skel_state = self.mhr.character_torch.joint_parameters_to_skeleton_state(joint_params)
         curr_joint_coords, curr_joint_quats, _ = torch.split(curr_skel_state, [3, 4, 1], dim=2)
         curr_skinned_verts = curr_skinned_verts / 100
         curr_joint_coords = curr_joint_coords / 100
@@ -348,7 +348,7 @@ class MHRHead(nn.Module):
             pred_face_for_forward = pred_face_for_forward.detach()
 
         # Run everything through atlas
-        output = self.mohr_forward(
+        output = self.mhr_forward(
             global_trans=global_trans,
             global_rot=global_rot_euler,
             body_pose_params=pred_pose_euler,

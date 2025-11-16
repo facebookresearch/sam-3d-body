@@ -946,7 +946,7 @@ class SAM3DBodyUnified(BaseModel):
             return pose_token, pose_output
 
     def get_atlas_output(self, batch, return_keypoints, return_joint_rotations=False, return_joint_params=False):
-        gt_verts, gt_j3d, gt_rots, gt_joint_params = self.head_pose.mohr_forward(
+        gt_verts, gt_j3d, gt_rots, gt_joint_params = self.head_pose.mhr_forward(
             global_trans=torch.zeros_like(
                 batch["atlas_params"]["global_orient"].squeeze(1)
             ),  # global_trans==0
@@ -1002,16 +1002,12 @@ class SAM3DBodyUnified(BaseModel):
             "vit_hmr",
             "hmr2",
             "vit",
-            "vit_hmr_triplet",
             "vit_hmr_decouple",
         ]:
             # HMR2.0 backbone (ViTPose) assumes a different aspect ratio as input size
             mask_embeddings = mask_embeddings[:, :, :, 2:-2]
         elif self.cfg.MODEL.BACKBONE.TYPE in [
             "vit_hmr_512_384",
-            "vit_hmr_triplet_512_384",
-            "vit_l_triplet_512_384",
-            "vit_hmr_decouple_512_384",
         ]:
             # for x2 resolution
             mask_embeddings = mask_embeddings[:, :, :, 4:-4]

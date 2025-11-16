@@ -146,9 +146,6 @@ class SAM3DBody(BaseModel):
                 "vit",                 
                 "vit_hmr_256",                 
                 "vit_hmr_512_384",                 
-                "vit_hmr_triplet",                 
-                "vit_hmr_triplet_512_384",                 
-                "vit_l_triplet_512_384",
             ]:
                 self.ray_cond_emb = nn.Conv2d(
                     2,
@@ -729,7 +726,7 @@ class SAM3DBody(BaseModel):
         return pose_token, pose_output
 
     def get_atlas_output(self, batch, return_keypoints):
-        gt_atlas_output = self.head_pose.mohr_forward(
+        gt_atlas_output = self.head_pose.mhr_forward(
             global_trans=torch.zeros_like(
                 batch["atlas_params"]["global_orient"].squeeze(1)
             ),  # global_trans==0

@@ -53,14 +53,11 @@ class BaseModel(BaseLightningModule):
                 "vit_hmr",
                 "hmr2",
                 "vit",
-                "vit_hmr_triplet",
             ]:
                 # HMR2.0 backbone (ViTPose) assumes a different aspect ratio as input size
                 batch_inputs = batch_inputs[:, :, :, 32:-32]
             elif self.cfg.MODEL.BACKBONE.TYPE in [
                 "vit_hmr_512_384",
-                "vit_hmr_triplet_512_384",
-                "vit_l_triplet_512_384",
             ]:
                 batch_inputs = batch_inputs[:, :, :, 64:-64]
             else:

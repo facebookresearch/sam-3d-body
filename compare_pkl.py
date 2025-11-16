@@ -55,7 +55,7 @@ source_path = 'cmu_stills'
 
 files = ['CMU - Still - 01']
 tag1 = '-edit1'
-tag2 = '-orig3'
+tag2 = '-edit2'
 
 for file in files:
     print("Comparing files for ", file)

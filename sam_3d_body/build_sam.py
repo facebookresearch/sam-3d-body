@@ -7,13 +7,6 @@ def build_sam_3d_body_model(
     proto_path: str = "",
     detector_path: str = "",
     moge_path: str = "",
-    bbox_threshold: float = 0.5,
-    sam_path: str = "",
-    use_mask: bool = False,
-    use_triplet: bool = False,
-    scale_factor=None,
-    just_left_hand=False,
-    use_face=False,
 ):
 
     return SAM3DBodyEstimator(
