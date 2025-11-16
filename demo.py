@@ -15,7 +15,7 @@ from tqdm import tqdm
 import cv2
 import numpy as np
 import torch
-
+import joblib 
 from sam_3d_body import load_sam_3d_body, SAM3DBodyEstimator, SAM3DBodyEstimatorTTA, SAM3DBodyEstimatorUnified
 from tools.vis_utils import visualize_sample
 
@@ -27,6 +27,7 @@ def main(args):
         )
     else:
         output_folder = args.output_folder
+
     os.makedirs(output_folder, exist_ok=True)
 
     # Use command-line args or environment variables
@@ -73,13 +74,18 @@ def main(args):
     image_extensions = ['*.jpg', '*.jpeg', '*.png', '*.gif', '*.bmp', '*.tiff', '*.webp']
     images_list = sorted([image for ext in image_extensions for image in glob(os.path.join(args.image_folder, ext))])
 
+    tag = "orig1"
     for image_path in tqdm(images_list):
         outputs = estimator.process_one_image(image_path, use_mask=args.use_mask, prompt_wrists_type=args.prompt_wrists_type)
+
+        image_name = image_path.split('/')[-1]
+        f = open(os.path.join(output_folder, image_name[:-4] + f'-{tag}.pkl'), "wb")
+        joblib.dump(outputs, f)
 
         img = cv2.imread(image_path)
         rend_img = visualize_sample(img, outputs, estimator.faces)
         for i, img in enumerate(rend_img):
-            cv2.imwrite(f"{output_folder}/{os.path.basename(image_path)[:-4]}_{i}.jpg", img.astype(np.uint8))
+            cv2.imwrite(f"{output_folder}/{os.path.basename(image_path)[:-4]}_{i}-{tag}.jpg", img.astype(np.uint8))
 
 
 if __name__ == "__main__":
