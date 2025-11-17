@@ -46,7 +46,7 @@ def rotation_angle_difference(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
     angle = torch.acos(cos_theta_clamped)
     return angle
 
-class SAM3DBodyEstimatorUnified:
+class SAM3DBodyEstimator:
     def __init__(
         self,
         sam_3d_body_model,
@@ -233,7 +233,6 @@ class SAM3DBodyEstimatorUnified:
         bbox_thr: float = 0.5,
         nms_thr: float = 0.3,
         use_mask: bool = False,
-        prompt_wrists_type: str = "v3",
     ):
         """
         Perform model prediction in top-down format: assuming input is a full image.
@@ -315,10 +314,10 @@ class SAM3DBodyEstimatorUnified:
         batch = self._prepare_batch(img, self.transform, boxes, masks, masks_score)
 
         #################### Run model inference on an image ####################
-
         batch = recursive_to(batch, "cuda")
         self.model._initialize_batch(batch)
 
+        # Handle masks - either provided externally or generated via default FOV estimator
         if cam_int is not None:
             print("Using provided camera intrinsics...")
             cam_int = cam_int.to(batch["img"])
@@ -420,114 +419,72 @@ class SAM3DBodyEstimatorUnified:
         rhand_output = self.model.forward_step(batch_rhand)[0]
         rhand_output['atlas'] = rhand_output['atlas_hand']
         
-        if self.prompt_wrists:
-            # TODO: check rotation_angle_difference beforehand.
-            # TODO: Left first or right first? Does it matter?
-            # TODO: Remember, we have keypoint confidences. For hand crops as well.
-            self.model.hand_batch_idx = []
-            self.model.body_batch_idx = list(range(batch["img"].shape[1]))
-            self.model.disable_hand = True
-            self.model.disable_body = False
-            
-            # Get right & left keypoints from crops; full image. Each are B x 1 x 2
-            kps_right_wrist_idx = 41
-            kps_left_wrist_idx = 62
-            right_kps_full = rhand_output['atlas']['pred_keypoints_2d'][:, [kps_right_wrist_idx]].clone()
-            left_kps_full = lhand_output['atlas']['pred_keypoints_2d'][:, [kps_right_wrist_idx]].clone()
-            left_kps_full[:, :, 0] = width - left_kps_full[:, :, 0] - 1 # Flip left hand
-            
-            # Next, get them to crop-normalized space.
-            right_kps_crop = self.model._full_to_crop(batch, right_kps_full)
-            left_kps_crop = self.model._full_to_crop(batch, left_kps_full)
-
-            if prompt_wrists_type == "v1":
-                # Assemble them into "fake" gt
-                right_left_kps_crop = torch.zeros(right_kps_crop.shape[0], 70, 3).to(right_kps_crop)
-                right_left_kps_crop[:, kps_right_wrist_idx, :2] = right_kps_crop.squeeze(1)
-                right_left_kps_crop[:, kps_left_wrist_idx, :2] = left_kps_crop.squeeze(1)
-                right_left_kps_crop[:, kps_right_wrist_idx, 2] = 1.0
-                right_left_kps_crop[:, kps_left_wrist_idx, 2] = 1.0
-                batch['keypoints_2d'] = right_left_kps_crop[:, None]
-                
-                # Set distance threshold to 0
-                self.model.keypoint_prompt_sampler.distance_thresh = 0.0
-                
-                # Two-step prompting
-                prev_prompt = []
-                full_output = {}
-                pose_output, keypoint_prompt = self.model._one_prompt_iter(
-                    batch, pose_output, prev_prompt, full_output
-                )
-                prev_prompt.append(keypoint_prompt.detach())
-                pose_output, keypoint_prompt = self.model._one_prompt_iter(
-                    batch, pose_output, prev_prompt, full_output
-                )
-            
-            elif prompt_wrists_type == "v3":
-                # Get right & left keypoints from crops; full image. Each are B x 1 x 2
-                kps_right_elbow_idx = 8
-                kps_left_elbow_idx = 7
-                right_kps_elbow_full = pose_output['atlas']['pred_keypoints_2d'][:, [kps_right_elbow_idx]].clone()
-                left_kps_elbow_full = pose_output['atlas']['pred_keypoints_2d'][:, [kps_left_elbow_idx]].clone()
-                
-                # Next, get them to crop-normalized space.
-                right_kps_elbow_crop = self.model._full_to_crop(batch, right_kps_elbow_full)
-                left_kps_elbow_crop = self.model._full_to_crop(batch, left_kps_elbow_full)
+        # Wrist+elbow prompt for merging
+        self.model.hand_batch_idx = []
+        self.model.body_batch_idx = list(range(batch["img"].shape[1]))
+        self.model.disable_hand = True
+        self.model.disable_body = False
         
-                # Assemble them into keypoint prompts
-                keypoint_prompt = torch.cat(
-                    [right_kps_crop, left_kps_crop, right_kps_elbow_crop, left_kps_elbow_crop], dim=1
-                )
-                keypoint_prompt = torch.cat([keypoint_prompt, keypoint_prompt[..., [-1]]], dim=-1)
-                keypoint_prompt[:, 0, -1] = kps_right_wrist_idx
-                keypoint_prompt[:, 1, -1] = kps_left_wrist_idx
-                keypoint_prompt[:, 2, -1] = kps_right_elbow_idx
-                keypoint_prompt[:, 3, -1] = kps_left_elbow_idx
-                
-                if keypoint_prompt.shape[0] > 1:
-                    # Replace invalid keypoints to dummy prompts
-                    invalid_prompt = (
-                        (keypoint_prompt[..., 0] < -0.5) |
-                        (keypoint_prompt[..., 0] > 0.5) |
-                        (keypoint_prompt[..., 1] < -0.5) |
-                        (keypoint_prompt[..., 1] > 0.5)
-                    ).unsqueeze(-1)
-                    dummy_prompt = torch.zeros((1, 1, 3)).to(keypoint_prompt)
-                    dummy_prompt[:, :, -1] = -2
-                    keypoint_prompt[:, :, :2] = torch.clamp(
-                        keypoint_prompt[:, :, :2] + 0.5, min=0.0, max=1.0
-                    )  # [-0.5, 0.5] --> [0, 1]
-                    keypoint_prompt = torch.where(invalid_prompt, dummy_prompt, keypoint_prompt)
-                else:
-                    # Only keep valid keypoints
-                    valid_keypoint = torch.all(
-                        (keypoint_prompt[:, :, :2] > -0.5) & (keypoint_prompt[:, :, :2] < 0.5),
-                        dim=2
-                    ).squeeze()
-                    keypoint_prompt = keypoint_prompt[:, valid_keypoint]
-                    keypoint_prompt[:, :, :2] = torch.clamp(
-                        keypoint_prompt[:, :, :2] + 0.5, min=0.0, max=1.0
-                    )  # [-0.5, 0.5] --> [0, 1]
-                
-                if len(keypoint_prompt):
-                    pose_output, _ = self._prompt_wrists(batch, pose_output, keypoint_prompt)
-            
-            elif prompt_wrists_type == "v2":
-                ## TODO: only prompt valid wrists
+        # Get right & left keypoints from crops; full image. Each are B x 1 x 2
+        kps_right_wrist_idx = 41
+        kps_left_wrist_idx = 62
+        right_kps_full = rhand_output['atlas']['pred_keypoints_2d'][:, [kps_right_wrist_idx]].clone()
+        left_kps_full = lhand_output['atlas']['pred_keypoints_2d'][:, [kps_right_wrist_idx]].clone()
+        left_kps_full[:, :, 0] = width - left_kps_full[:, :, 0] - 1 # Flip left hand
         
-                # Assemble them into keypoint prompts
-                keypoint_prompt = torch.cat(
-                    [right_kps_crop, left_kps_crop], dim=1
-                )
-                keypoint_prompt = torch.cat([keypoint_prompt, keypoint_prompt[..., [-1]]], dim=-1)
-                keypoint_prompt[:, 0, -1] = kps_right_wrist_idx
-                keypoint_prompt[:, 1, -1] = kps_left_wrist_idx
-                keypoint_prompt[:, :, :2] = torch.clamp(
-                    keypoint_prompt[:, :, :2] + 0.5, min=0.0, max=1.0
-                )  # [-0.5, 0.5] --> [0, 1]
-            
-                pose_output, _ = self._prompt_wrists(batch, pose_output, keypoint_prompt)
+        # Next, get them to crop-normalized space.
+        right_kps_crop = self.model._full_to_crop(batch, right_kps_full)
+        left_kps_crop = self.model._full_to_crop(batch, left_kps_full)
 
+        # Get right & left keypoints from crops; full image. Each are B x 1 x 2
+        kps_right_elbow_idx = 8
+        kps_left_elbow_idx = 7
+        right_kps_elbow_full = pose_output['atlas']['pred_keypoints_2d'][:, [kps_right_elbow_idx]].clone()
+        left_kps_elbow_full = pose_output['atlas']['pred_keypoints_2d'][:, [kps_left_elbow_idx]].clone()
+        
+        # Next, get them to crop-normalized space.
+        right_kps_elbow_crop = self.model._full_to_crop(batch, right_kps_elbow_full)
+        left_kps_elbow_crop = self.model._full_to_crop(batch, left_kps_elbow_full)
+
+        # Assemble them into keypoint prompts
+        keypoint_prompt = torch.cat(
+            [right_kps_crop, left_kps_crop, right_kps_elbow_crop, left_kps_elbow_crop], dim=1
+        )
+        keypoint_prompt = torch.cat([keypoint_prompt, keypoint_prompt[..., [-1]]], dim=-1)
+        keypoint_prompt[:, 0, -1] = kps_right_wrist_idx
+        keypoint_prompt[:, 1, -1] = kps_left_wrist_idx
+        keypoint_prompt[:, 2, -1] = kps_right_elbow_idx
+        keypoint_prompt[:, 3, -1] = kps_left_elbow_idx
+        
+        if keypoint_prompt.shape[0] > 1:
+            # Replace invalid keypoints to dummy prompts
+            invalid_prompt = (
+                (keypoint_prompt[..., 0] < -0.5) |
+                (keypoint_prompt[..., 0] > 0.5) |
+                (keypoint_prompt[..., 1] < -0.5) |
+                (keypoint_prompt[..., 1] > 0.5)
+            ).unsqueeze(-1)
+            dummy_prompt = torch.zeros((1, 1, 3)).to(keypoint_prompt)
+            dummy_prompt[:, :, -1] = -2
+            keypoint_prompt[:, :, :2] = torch.clamp(
+                keypoint_prompt[:, :, :2] + 0.5, min=0.0, max=1.0
+            )  # [-0.5, 0.5] --> [0, 1]
+            keypoint_prompt = torch.where(invalid_prompt, dummy_prompt, keypoint_prompt)
+        else:
+            # Only keep valid keypoints
+            valid_keypoint = torch.all(
+                (keypoint_prompt[:, :, :2] > -0.5) & (keypoint_prompt[:, :, :2] < 0.5),
+                dim=2
+            ).squeeze()
+            keypoint_prompt = keypoint_prompt[:, valid_keypoint]
+            keypoint_prompt[:, :, :2] = torch.clamp(
+                keypoint_prompt[:, :, :2] + 0.5, min=0.0, max=1.0
+            )  # [-0.5, 0.5] --> [0, 1]
+        
+        if len(keypoint_prompt):
+            pose_output, _ = self._prompt_wrists(batch, pose_output, keypoint_prompt)
+
+        # Done prompting
         # Drop in hand pose
         left_hand_pose_params = lhand_output['atlas']['hand'][:, :54]
         right_hand_pose_params = rhand_output['atlas']['hand'][:, 54:]

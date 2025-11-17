@@ -6,7 +6,7 @@ from .utils.config import get_config
 from .utils.checkpoint import load_state_dict
 
 
-def load_sam_3d_body(checkpoint_path: str = "", mhr_path: str = ""):
+def load_sam_3d_body(checkpoint_path: str = "", device: str = "cuda", mhr_path: str = ""):
     print("Loading SAM 3D Body model...")
     
     # Check the current directory, and if not present check the parent dir.
@@ -21,6 +21,7 @@ def load_sam_3d_body(checkpoint_path: str = "", mhr_path: str = ""):
 
     # Disable face for inference
     model_cfg.defrost()
+    # TODO: fix ALTAS
     model_cfg.MODEL.ATLAS_HEAD.ZERO_FACE = True
     model_cfg.MODEL.ATLAS_HEAD.ATLAS_MODEL_PATH = mhr_path
     model_cfg.freeze()
@@ -35,6 +36,8 @@ def load_sam_3d_body(checkpoint_path: str = "", mhr_path: str = ""):
         state_dict = checkpoint
     load_state_dict(model, state_dict, strict=False)
 
+    model = model.to(device)
+    model.eval()
     return model, model_cfg
 
 

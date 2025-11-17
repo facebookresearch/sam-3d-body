@@ -116,7 +116,7 @@ class SAM3DBodyUnified(BaseModel):
         self.head_pose.hand_pose_comps_ori = nn.Parameter(self.head_pose.hand_pose_comps.clone(), requires_grad=False)
         self.head_pose.hand_pose_comps.data = torch.eye(54).to(self.head_pose.hand_pose_comps.data).float()
         
-        # Initialize pose token with learnable params (not mean pose in SMPL)
+        # Initialize pose token with learnable params
         # Note: bias/initial value should be zero-pose in cont, not all-zeros
         self.init_pose = nn.Embedding(1, self.head_pose.npose)
 
