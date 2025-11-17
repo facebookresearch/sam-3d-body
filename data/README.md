@@ -13,9 +13,9 @@ pip install pandas==2.0.3 numpy==1.26 pycolmap==0.3.0 smplx==0.1.28 yacs==0.1.8 
 pip install datasets huggingface_hub webdataset pycocotools
 ```
 
-## 📂 Dataset Preparation
+## 📂 Image Preparation
 
-Prepare datasets required for SAM-3D-Body by following the individual setup guides linked below:
+Prepare dataset images required for SAM-3D-Body by following the individual setup guides linked below:
 
 - [3DPW](scripts/3dpw/README.md)
 - [AI Challenger](scripts/aic/README.md)
