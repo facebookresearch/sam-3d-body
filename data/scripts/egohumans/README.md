@@ -48,20 +48,3 @@ Follow the steps below to prepare the **[EgoHumans Dataset](https://rawalkhirodk
     │   └── ...
     └── ...
     ```
-
-<!-- - Download 🔗 [SAM-3D-Body Data](https://huggingface.co/datasets/facebook/sam-3d-body-dataset) to `$SAM3D_BODY_ANN_DIR`.
-
-    ```bash
-    python scripts/download.py \
-        --save_dir $SAM3D_BODY_ANN_DIR \
-        --splits harmony4d_train,harmony4d_test
-    ```
-
-- Create WebDataset shards with the following command:
-
-    ```bash
-    python scripts/create_webdataset.py \
-        --ann_dir $SAM3D_BODY_ANN_DIR/egohumans_train \
-        --img_dir $EGOHUMANS_IMG_DIR \ 
-        --out_dir $SAM3D_WDS_DIR/egohumans_train
-    ``` -->

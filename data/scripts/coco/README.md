@@ -31,20 +31,3 @@ Follow the steps below to prepare the **[COCO Dataset](https://cocodataset.org/#
     ├── train2014
     └── val2014
     ```
-
-<!-- - Download 🔗 [SAM-3D-Body Data](https://huggingface.co/datasets/facebook/sam-3d-body-dataset) to `$SAM3D_BODY_ANN_DIR`.
-
-    ```bash
-    python scripts/download.py \
-        --save_dir $SAM3D_BODY_ANN_DIR \
-        --splits coco_train
-    ```
-
-- Create WebDataset shards with the following command:
-
-    ```bash
-    python scripts/create_webdataset.py \
-        --annotation_dir $SAM3D_BODY_ANN_DIR/coco_train \
-        --image_dir $COCO_IMG_DIR \
-        --webdataset_dir $SAM3D_BODY_WDS_DIR/coco_train
-    ``` -->

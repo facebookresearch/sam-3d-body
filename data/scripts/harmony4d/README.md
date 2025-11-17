@@ -58,25 +58,3 @@ Follow the steps below to prepare the **[Harmony4D Dataset](https://jyuntins.git
         │   └── ...
         └── ...
     ```
-
-<!-- - Download 🔗 [SAM-3D-Body Data](https://huggingface.co/datasets/facebook/sam-3d-body-dataset) to `$SAM3D_BODY_ANN_DIR`.
-
-    ```bash
-    python scripts/download.py \
-        --save_dir $SAM3D_BODY_ANN_DIR \
-        --splits harmony4d_train,harmony4d_test
-    ```
-
-- Create WebDataset shards with the following command:
-
-    ```bash
-    python scripts/create_webdataset.py \
-        --annotation_dir $SAM3D_BODY_ANN_DIR/harmony4d_train \
-        --image_dir $HARMONY4D_IMG_DIR \
-        --webdataset_dir $SAM3D_BODY_WDS_DIR/harmony4d_train
-
-    python scripts/create_webdataset.py \
-        --annotation_dir $SAM3D_BODY_ANN_DIR/harmony4d_test \
-        --image_dir $HARMONY4D_IMG_DIR \
-        --webdataset_dir $SAM3D_WDS_DIR/harmony4d_test
-    ``` -->
