@@ -17,14 +17,14 @@ pip install datasets huggingface_hub webdataset pycocotools
 
 Prepare datasets required for SAM-3D-Body by following the individual setup guides linked below:
 
-- [3DPW](data/scripts/3dpw/README.md)
-- [AI Challenger](data/scripts/aic/README.md)
-- [COCO](data/scripts/coco/README.md)
-- [EgoExo4D](data/scripts/egoexo4d/README.md)
-- [EgoHumans](data/scripts/egohumans/README.md)
-- [Harmony4D](data/scripts/harmony4d/README.md)
-- [MPII](data/scripts/mpii/README.md)
-- [SA1B](data/scripts/sa1b/README.md)
+- [3DPW](scripts/3dpw/README.md)
+- [AI Challenger](scripts/aic/README.md)
+- [COCO](scripts/coco/README.md)
+- [EgoExo4D](scripts/egoexo4d/README.md)
+- [EgoHumans](scripts/egohumans/README.md)
+- [Harmony4D](scripts/harmony4d/README.md)
+- [MPII](scripts/mpii/README.md)
+- [SA1B](scripts/sa1b/README.md)
 
 Each dataset guide describes how to download, extract, and structure the raw data for WebDataset creation.
 
