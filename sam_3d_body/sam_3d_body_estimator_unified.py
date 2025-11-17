@@ -391,7 +391,7 @@ class SAM3DBodyEstimatorUnified:
         
         # Unflip output
         ## Flip scale
-        ### Get Proto values
+        ### Get MHR values
         scale_r_hands_mean = -0.1798856556415558
         scale_l_hands_mean = -0.18402963876724243
         scale_r_hands_std = 0.04739458113908768

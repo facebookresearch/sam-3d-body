@@ -6,7 +6,7 @@ from .utils.config import get_config
 from .utils.checkpoint import load_state_dict
 
 
-def load_sam_3d_body(checkpoint_path: str = "", proto_path: str = ""):
+def load_sam_3d_body(checkpoint_path: str = "", mhr_path: str = ""):
     print("Loading SAM 3D Body model...")
     
     # Check the current directory, and if not present check the parent dir.
@@ -22,7 +22,7 @@ def load_sam_3d_body(checkpoint_path: str = "", proto_path: str = ""):
     # Disable face for inference
     model_cfg.defrost()
     model_cfg.MODEL.ATLAS_HEAD.ZERO_FACE = True
-    model_cfg.MODEL.ATLAS_HEAD.ATLAS_MODEL_PATH = proto_path
+    model_cfg.MODEL.ATLAS_HEAD.ATLAS_MODEL_PATH = mhr_path
     model_cfg.freeze()
 
     # Initialze the model
@@ -46,4 +46,4 @@ def _hf_download(repo_id):
 
 def load_sam_3d_body_hf(repo_id, **kwargs):
     ckpt_path, mhr_path = _hf_download(repo_id)
-    return load_sam_3d_body(checkpoint_path=ckpt_path, proto_path=mhr_path)
+    return load_sam_3d_body(checkpoint_path=ckpt_path, mhr_path=mhr_path)

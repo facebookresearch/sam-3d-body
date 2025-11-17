@@ -4,14 +4,14 @@ from .estimator import SAM3DBodyEstimator
 
 def build_sam_3d_body_model(
     checkpoint_path: str = "",
-    proto_path: str = "",
+    mhr_path: str = "",
     detector_path: str = "",
     moge_path: str = "",
 ):
 
     return SAM3DBodyEstimator(
         checkpoint_path=checkpoint_path,
-        proto_path=proto_path,
+        mhr_path=mhr_path,
         detector_path=detector_path,
         moge_path=moge_path,
     )
@@ -24,4 +24,4 @@ def _hf_download(repo_id):
 
 def build_sam_3d_body_hf(repo_id, **kwargs):
     ckpt_path, mhr_path = _hf_download(repo_id)
-    return build_sam_3d_body_model(checkpoint_path=ckpt_path, proto_path=mhr_path, **kwargs)
+    return build_sam_3d_body_model(checkpoint_path=ckpt_path, mhr_path=mhr_path, **kwargs)
