@@ -95,7 +95,6 @@ dmypy.json
 # Project-specific: Data files
 *.npy
 *.npz
-/data/
 
 # Project-specific: Media files
 *.mp4
