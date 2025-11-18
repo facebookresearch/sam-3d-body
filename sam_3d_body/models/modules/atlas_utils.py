@@ -25,6 +25,27 @@ def load_pickle(f):
 def save_pickle(obj, f):
     with open(f, "wb+") as ff:
         pickle.dump(obj, ff)
+
+def rotation_angle_difference(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
+    """
+    Compute the angle difference (magnitude) between two batches of SO(3) rotation matrices.
+    Args:
+        A: Tensor of shape (*, 3, 3), batch of rotation matrices.
+        B: Tensor of shape (*, 3, 3), batch of rotation matrices.
+    Returns:
+        Tensor of shape (*,), angle differences in radians.
+    """
+    # Compute relative rotation matrix
+    R_rel = torch.matmul(A, B.transpose(-2, -1))  # (B, 3, 3)
+    # Compute trace of relative rotation
+    trace = R_rel[..., 0, 0] + R_rel[..., 1, 1] + R_rel[..., 2, 2]  # (B,)
+    # Compute angle using the trace formula
+    cos_theta = (trace - 1) / 2
+    # Clamp for numerical stability
+    cos_theta_clamped = torch.clamp(cos_theta, -1.0, 1.0)
+    # Compute angle difference
+    angle = torch.acos(cos_theta_clamped)
+    return angle
         
 def batch6DFromXYZ(r, return_9D=False):
     """
