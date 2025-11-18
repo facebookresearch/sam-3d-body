@@ -67,7 +67,7 @@ class WeakPerspectiveHead(nn.Module):
         bbox_size=None,  # not used
         img_size=None,  # not used
         cam_int=None,  # not used
-        is_atlas: bool = True,
+        is_mhr: bool = True,
         use_intrin_center: bool = False
     ):
         assert not use_intrin_center, "Not implemented"
@@ -92,7 +92,7 @@ class WeakPerspectiveHead(nn.Module):
             import pdb
 
             pdb.set_trace()
-        if is_atlas:
+        if is_mhr:
             pred_cam_t[..., [1, 2]] *= -1  # Camera system difference
 
         # Compute camera translation
@@ -174,7 +174,7 @@ class PerspectiveHead(nn.Module):
         bbox_size: torch.Tensor,
         img_size: torch.Tensor,
         cam_int: torch.Tensor,
-        is_atlas: bool = True,
+        is_mhr: bool = True,
         use_intrin_center: bool = False,
     ):
         """
@@ -185,7 +185,7 @@ class PerspectiveHead(nn.Module):
         """
         batch_size = points_3d.shape[0]
         pred_cam = pred_cam.clone()
-        if is_atlas:
+        if is_mhr:
             pred_cam[..., [0, 2]] *= -1  # Camera system difference
 
         # Compute camera translation: (scale, x, y) --> (x, y, depth)

@@ -14,7 +14,7 @@ from ..decoders import build_decoder, build_keypoint_sampler, PromptEncoder
 from ..heads import build_head
 from ..modules.transformer import FFN, MLP
 from ..modules.camera_embed import CameraEncoder
-from sam_3d_body.models.modules.atlas_utils import rotation_angle_difference
+from sam_3d_body.models.modules.mhr_utils import rotation_angle_difference
 from sam_3d_body.models.decoders.prompt_encoder import PositionEmbeddingRandom
 
 from .base_model import BaseModel
@@ -88,14 +88,14 @@ class SAM3DBody(BaseModel):
         # Support conditioned information for decoder
         cond_dim = 3
         init_dim = self.head_pose.npose + self.head_camera.ncam + cond_dim
-        self.init_to_token_atlas = nn.Linear(init_dim, self.cfg.MODEL.DECODER.DIM)
-        self.prev_to_token_atlas = nn.Linear(
+        self.init_to_token_mhr = nn.Linear(init_dim, self.cfg.MODEL.DECODER.DIM)
+        self.prev_to_token_mhr = nn.Linear(
             init_dim - cond_dim, self.cfg.MODEL.DECODER.DIM
         )
-        self.init_to_token_atlas_hand = nn.Linear(
+        self.init_to_token_mhr_hand = nn.Linear(
             init_dim, self.cfg.MODEL.DECODER.DIM
         )
-        self.prev_to_token_atlas_hand = nn.Linear(
+        self.prev_to_token_mhr_hand = nn.Linear(
             init_dim - cond_dim, self.cfg.MODEL.DECODER.DIM
         )
 
@@ -333,7 +333,7 @@ class SAM3DBody(BaseModel):
             )  # B x 1 x 410 (this is with the CLIFF condition)
         else:
             init_input = init_estimate
-        token_embeddings = self.init_to_token_atlas(init_input).view(
+        token_embeddings = self.init_to_token_mhr(init_input).view(
             batch_size, 1, -1
         )  # B x 1 x 1024 (linear layered)
 
@@ -346,7 +346,7 @@ class SAM3DBody(BaseModel):
                 # Use initial embedding if no previous embedding
                 prev_estimate = init_estimate
             # Previous estimate w/o the CLIFF condition.
-            prev_embeddings = self.prev_to_token_atlas(prev_estimate).view(
+            prev_embeddings = self.prev_to_token_mhr(prev_estimate).view(
                 batch_size, 1, -1
             )  # 407 -> B x 1 x 1024; linear layer-ed
 
@@ -603,7 +603,7 @@ class SAM3DBody(BaseModel):
             )  # B x 1 x 410 (this is with the CLIFF condition)
         else:
             init_input = init_estimate
-        token_embeddings = self.init_to_token_atlas_hand(init_input).view(
+        token_embeddings = self.init_to_token_mhr_hand(init_input).view(
             batch_size, 1, -1
         )  # B x 1 x 1024 (linear layered)
         num_pose_token = token_embeddings.shape[1]
@@ -615,7 +615,7 @@ class SAM3DBody(BaseModel):
                 # Use initial embedding if no previous embedding
                 prev_estimate = init_estimate
             # Previous estimate w/o the CLIFF condition.
-            prev_embeddings = self.prev_to_token_atlas_hand(prev_estimate).view(
+            prev_embeddings = self.prev_to_token_mhr_hand(prev_estimate).view(
                 batch_size, 1, -1
             )  # 407 -> B x 1 x 1024; linear layer-ed
 
@@ -826,39 +826,6 @@ class SAM3DBody(BaseModel):
         else:
             return pose_token, pose_output
 
-    def get_atlas_output(self, batch, return_keypoints, return_joint_rotations=False, return_joint_params=False):
-        gt_verts, gt_j3d, gt_rots, gt_joint_params = self.head_pose.mhr_forward(
-            global_trans=torch.zeros_like(
-                batch["atlas_params"]["global_orient"].squeeze(1)
-            ),  # global_trans==0
-            global_rot=batch["atlas_params"]["global_orient"].squeeze(1),
-            body_pose_params=batch["atlas_params"]["body_pose"].squeeze(1),
-            hand_pose_params=batch["atlas_params"]["hand"].squeeze(1),  # 24 x 64
-            scale_params=batch["atlas_params"]["scale"].squeeze(1),
-            shape_params=batch["atlas_params"]["shape"].squeeze(1),
-            expr_params=batch["atlas_params"]["face"].squeeze(1),
-            do_pcblend=True,
-            return_keypoints=True,
-            return_joint_rotations=True,
-            return_joint_params=True,
-        )
-        gt_verts[..., [1, 2]] *= -1  # Camera system difference
-        gt_j3d[..., [1, 2]] *= -1  # Camera system difference
-
-        to_return = [gt_verts]
-
-        if return_keypoints:
-            to_return.append(gt_j3d)
-        if return_joint_rotations:
-            to_return.append(gt_rots)
-        if return_joint_params:
-            to_return.append(gt_joint_params)
-
-        if len(to_return) == 1:
-            return to_return[0]
-        else:
-            return tuple(to_return)
-
     @torch.no_grad()
     def _get_keypoint_prompt(self, batch, pred_keypoints_2d, force_dummy=False):
         if self.camera_type == "perspective":
@@ -904,8 +871,8 @@ class SAM3DBody(BaseModel):
         image_embeddings = output["image_embeddings"]
         condition_info = output["condition_info"]
 
-        if "atlas" in output and output["atlas"] is not None:
-            pose_output = output["atlas"]  # body-only output
+        if "mhr" in output and output["mhr"] is not None:
+            pose_output = output["mhr"]  # body-only output
             # Use previous estimate as initialization
             prev_estimate = torch.cat(
                 [
@@ -924,11 +891,11 @@ class SAM3DBody(BaseModel):
                 )
             prev_shape = prev_estimate.shape[1:]
 
-            pred_keypoints_2d = output["atlas"]["pred_keypoints_2d"].detach().clone()
+            pred_keypoints_2d = output["mhr"]["pred_keypoints_2d"].detach().clone()
             kpt_shape = pred_keypoints_2d.shape[1:]
 
-        if "atlas_hand" in output and output["atlas_hand"] is not None:
-            pose_output_hand = output["atlas_hand"]
+        if "mhr_hand" in output and output["mhr_hand"] is not None:
+            pose_output_hand = output["mhr_hand"]
             # Use previous estimate as initialization
             prev_estimate_hand = torch.cat(
                 [
@@ -953,25 +920,25 @@ class SAM3DBody(BaseModel):
             prev_shape = prev_estimate_hand.shape[1:]
 
             pred_keypoints_2d_hand = (
-                output["atlas_hand"]["pred_keypoints_2d"].detach().clone()
+                output["mhr_hand"]["pred_keypoints_2d"].detach().clone()
             )
             kpt_shape = pred_keypoints_2d_hand.shape[1:]
 
         all_prev_estimate = torch.zeros(
             (image_embeddings.shape[0], *prev_shape), device=image_embeddings.device
         )
-        if "atlas" in output and output["atlas"] is not None:
+        if "mhr" in output and output["mhr"] is not None:
             all_prev_estimate[self.body_batch_idx] = prev_estimate
-        if "atlas_hand" in output and output["atlas_hand"] is not None:
+        if "mhr_hand" in output and output["mhr_hand"] is not None:
             all_prev_estimate[self.hand_batch_idx] = prev_estimate_hand
 
         # Get keypoint prompts
         all_pred_keypoints_2d = torch.zeros(
             (image_embeddings.shape[0], *kpt_shape), device=image_embeddings.device
         )
-        if "atlas" in output and output["atlas"] is not None:
+        if "mhr" in output and output["mhr"] is not None:
             all_pred_keypoints_2d[self.body_batch_idx] = pred_keypoints_2d
-        if "atlas_hand" in output and output["atlas_hand"] is not None:
+        if "mhr_hand" in output and output["mhr_hand"] is not None:
             all_pred_keypoints_2d[self.hand_batch_idx] = pred_keypoints_2d_hand
 
         keypoint_prompt = self._get_keypoint_prompt(batch, all_pred_keypoints_2d)
@@ -1008,8 +975,8 @@ class SAM3DBody(BaseModel):
         # Update prediction output
         output.update(
             {
-                "atlas": pose_output,
-                "atlas_hand": pose_output_hand,
+                "mhr": pose_output,
+                "mhr_hand": pose_output_hand,
             }
         )
 
@@ -1284,8 +1251,8 @@ class SAM3DBody(BaseModel):
 
         output = {
             # "pose_token": pose_token,
-            "atlas": pose_output,  # atlas prediction output
-            "atlas_hand": pose_output_hand,  # atlas prediction output
+            "mhr": pose_output,  # mhr prediction output
+            "mhr_hand": pose_output_hand,  # mhr prediction output
             "condition_info": condition_info,
             "image_embeddings": image_embeddings,
         }
@@ -1298,11 +1265,11 @@ class SAM3DBody(BaseModel):
                 ).sigmoid()  # x1, y1, w, h for body samples, 0 ~ 1
                 hand_logits = self.hand_cls_embed(output_hand_box_tokens)
 
-                output["atlas"]["hand_box"] = hand_coords
-                output["atlas"]["hand_logits"] = hand_logits
+                output["mhr"]["hand_box"] = hand_coords
+                output["mhr"]["hand_logits"] = hand_logits
                 if self.cfg.MODEL.DECODER.get("HAND_DETECT_DO_UNCERT", False):
                     pred_hand_box_logsigma = self.hand_box_logsigma_embed(output_hand_box_tokens)
-                    output["atlas"]["pred_hand_box_logsigma"] = pred_hand_box_logsigma
+                    output["mhr"]["pred_hand_box_logsigma"] = pred_hand_box_logsigma
 
             if len(self.hand_batch_idx):
                 output_hand_box_tokens_hand_batch = tokens_output_hand
@@ -1312,11 +1279,11 @@ class SAM3DBody(BaseModel):
                 ).sigmoid()  # x1, y1, w, h for hand samples
                 hand_logits_hand_batch = self.hand_cls_embed(output_hand_box_tokens_hand_batch)
 
-                output["atlas_hand"]["hand_box"] = hand_coords_hand_batch
-                output["atlas_hand"]["hand_logits"] = hand_logits_hand_batch
+                output["mhr_hand"]["hand_box"] = hand_coords_hand_batch
+                output["mhr_hand"]["hand_logits"] = hand_logits_hand_batch
                 if self.cfg.MODEL.DECODER.get("HAND_DETECT_DO_UNCERT", False):
                     pred_hand_box_logsigma_hand_batch = self.hand_box_logsigma_embed(output_hand_box_tokens_hand_batch)
-                    output["atlas_hand"]["pred_hand_box_logsigma"] = pred_hand_box_logsigma_hand_batch
+                    output["mhr_hand"]["pred_hand_box_logsigma"] = pred_hand_box_logsigma_hand_batch
 
         return output
 
@@ -1350,15 +1317,15 @@ class SAM3DBody(BaseModel):
         batch = self._get_hand_box(pose_output, batch, scale_factor=hand_scale_factor)
         ori_local_wrist_rotmat = roma.euler_to_rotmat(
             "XZY",
-            pose_output['atlas']['body_pose'][:, [41, 43, 42, 31, 33, 32]].unflatten(1, (2, 3))
+            pose_output['mhr']['body_pose'][:, [41, 43, 42, 31, 33, 32]].unflatten(1, (2, 3))
         )
 
         if use_hand_box:
             # Assuming square crop into backbone
-            pred_left_hand_box = pose_output["atlas"]["hand_box"][:, 0].detach().cpu().numpy() * self.cfg.MODEL.IMAGE_SIZE[0]
-            pred_right_hand_box = pose_output["atlas"]["hand_box"][:, 1].detach().cpu().numpy() * self.cfg.MODEL.IMAGE_SIZE[0]
-            pred_left_hand_logits = pose_output["atlas"]["hand_logits"][:, 0].detach().cpu().numpy()
-            pred_right_hand_logits = pose_output["atlas"]["hand_logits"][:, 1].detach().cpu().numpy()
+            pred_left_hand_box = pose_output["mhr"]["hand_box"][:, 0].detach().cpu().numpy() * self.cfg.MODEL.IMAGE_SIZE[0]
+            pred_right_hand_box = pose_output["mhr"]["hand_box"][:, 1].detach().cpu().numpy() * self.cfg.MODEL.IMAGE_SIZE[0]
+            pred_left_hand_logits = pose_output["mhr"]["hand_logits"][:, 0].detach().cpu().numpy()
+            pred_right_hand_logits = pose_output["mhr"]["hand_logits"][:, 1].detach().cpu().numpy()
             
             # Change boxes into squares
             batch['left_center'] = pred_left_hand_box[:, :2]
@@ -1394,7 +1361,7 @@ class SAM3DBody(BaseModel):
         batch_lhand = prepare_batch(flipped_img, transform_hand, left_xyxy, cam_int=cam_int.clone())
         batch_lhand = recursive_to(batch_lhand, "cuda")
         lhand_output = self.forward_step(batch_lhand)[0]
-        lhand_output['atlas'] = lhand_output['atlas_hand']
+        lhand_output['mhr_hand'] = lhand_output['mhr_hand']
         
         # Unflip output
         ## Flip scale
@@ -1405,12 +1372,12 @@ class SAM3DBody(BaseModel):
         scale_r_hands_std = 0.04739458113908768
         scale_l_hands_std = 0.04183576628565788
         ### Apply
-        lhand_output['atlas']['scale'][:, 9] = ((scale_r_hands_mean + scale_r_hands_std * lhand_output['atlas']['scale'][:, 8]) - scale_l_hands_mean) / scale_l_hands_std
+        lhand_output['mhr_hand']['scale'][:, 9] = ((scale_r_hands_mean + scale_r_hands_std * lhand_output['mhr_hand']['scale'][:, 8]) - scale_l_hands_mean) / scale_l_hands_std
         ## Get the right hand global rotation, flip it, put it in as left.
-        lhand_output['atlas']['joint_global_rots'][:, 78] = lhand_output['atlas']['joint_global_rots'][:, 42].clone()
-        lhand_output['atlas']['joint_global_rots'][:, 78, [1, 2], :] *= -1
+        lhand_output['mhr_hand']['joint_global_rots'][:, 78] = lhand_output['mhr_hand']['joint_global_rots'][:, 42].clone()
+        lhand_output['mhr_hand']['joint_global_rots'][:, 78, [1, 2], :] *= -1
         ### Flip hand pose
-        lhand_output['atlas']['hand'][:, :54] = lhand_output['atlas']['hand'][:, 54:]
+        lhand_output['mhr_hand']['hand'][:, :54] = lhand_output['mhr_hand']['hand'][:, 54:]
         ### Unflip box
         batch_lhand['bbox_center'][:, :, 0] = width - batch_lhand['bbox_center'][:, :, 0] - 1
     
@@ -1425,7 +1392,7 @@ class SAM3DBody(BaseModel):
         batch_rhand = prepare_batch(img, transform_hand, right_xyxy, cam_int=cam_int.clone())
         batch_rhand = recursive_to(batch_rhand, "cuda")
         rhand_output = self.forward_step(batch_rhand)[0]
-        rhand_output['atlas'] = rhand_output['atlas_hand']
+        rhand_output['mhr_hand'] = rhand_output['mhr_hand']
         
         # Wrist+elbow prompt for merging
         self.hand_batch_idx = []
@@ -1437,8 +1404,8 @@ class SAM3DBody(BaseModel):
         # TODO: replace all hard-code numbers
         kps_right_wrist_idx = 41
         kps_left_wrist_idx = 62
-        right_kps_full = rhand_output['atlas']['pred_keypoints_2d'][:, [kps_right_wrist_idx]].clone()
-        left_kps_full = lhand_output['atlas']['pred_keypoints_2d'][:, [kps_right_wrist_idx]].clone()
+        right_kps_full = rhand_output['mhr_hand']['pred_keypoints_2d'][:, [kps_right_wrist_idx]].clone()
+        left_kps_full = lhand_output['mhr_hand']['pred_keypoints_2d'][:, [kps_right_wrist_idx]].clone()
         left_kps_full[:, :, 0] = width - left_kps_full[:, :, 0] - 1 # Flip left hand
         
         # Next, get them to crop-normalized space.
@@ -1448,8 +1415,8 @@ class SAM3DBody(BaseModel):
         # Get right & left keypoints from crops; full image. Each are B x 1 x 2
         kps_right_elbow_idx = 8
         kps_left_elbow_idx = 7
-        right_kps_elbow_full = pose_output['atlas']['pred_keypoints_2d'][:, [kps_right_elbow_idx]].clone()
-        left_kps_elbow_full = pose_output['atlas']['pred_keypoints_2d'][:, [kps_left_elbow_idx]].clone()
+        right_kps_elbow_full = pose_output['mhr']['pred_keypoints_2d'][:, [kps_right_elbow_idx]].clone()
+        left_kps_elbow_full = pose_output['mhr']['pred_keypoints_2d'][:, [kps_left_elbow_idx]].clone()
         
         # Next, get them to crop-normalized space.
         right_kps_elbow_crop = self._full_to_crop(batch, right_kps_elbow_full)
@@ -1498,31 +1465,31 @@ class SAM3DBody(BaseModel):
         ##############################################################################
 
         # Drop in hand pose
-        left_hand_pose_params = lhand_output['atlas']['hand'][:, :54]
-        right_hand_pose_params = rhand_output['atlas']['hand'][:, 54:]
+        left_hand_pose_params = lhand_output['mhr_hand']['hand'][:, :54]
+        right_hand_pose_params = rhand_output['mhr_hand']['hand'][:, 54:]
         updated_hand_pose = torch.cat([left_hand_pose_params, right_hand_pose_params], dim=1)
             
         # Drop in hand scales
-        updated_scale = pose_output['atlas']['scale'].clone()
-        updated_scale[:, 9] = lhand_output['atlas']['scale'][:, 9]
-        updated_scale[:, 8] = rhand_output['atlas']['scale'][:, 8]
-        updated_scale[:, 18:] = (lhand_output['atlas']['scale'][:, 18:] + rhand_output['atlas']['scale'][:, 18:]) / 2
+        updated_scale = pose_output['mhr']['scale'].clone()
+        updated_scale[:, 9] = lhand_output['mhr_hand']['scale'][:, 9]
+        updated_scale[:, 8] = rhand_output['mhr_hand']['scale'][:, 8]
+        updated_scale[:, 18:] = (lhand_output['mhr_hand']['scale'][:, 18:] + rhand_output['mhr_hand']['scale'][:, 18:]) / 2
         
         # Update hand shape
-        updated_shape = pose_output['atlas']['shape'].clone()
-        updated_shape[:, 40:] = (lhand_output['atlas']['shape'][:, 40:] + rhand_output['atlas']['shape'][:, 40:]) / 2
+        updated_shape = pose_output['mhr']['shape'].clone()
+        updated_shape[:, 40:] = (lhand_output['mhr_hand']['shape'][:, 40:] + rhand_output['mhr_hand']['shape'][:, 40:]) / 2
             
         ############################ Doing IK ############################
 
         # First, forward just FK
         joint_rotations = self.head_pose.mhr_forward(
-            global_trans=pose_output['atlas']['global_rot'] * 0,
-            global_rot=pose_output['atlas']['global_rot'],
-            body_pose_params=pose_output['atlas']['body_pose'],
+            global_trans=pose_output['mhr']['global_rot'] * 0,
+            global_rot=pose_output['mhr']['global_rot'],
+            body_pose_params=pose_output['mhr']['body_pose'],
             hand_pose_params=updated_hand_pose,
             scale_params=updated_scale,
             shape_params=updated_shape,
-            expr_params=pose_output['atlas']['face'],
+            expr_params=pose_output['mhr']['face'],
             return_joint_rotations=True,
         )[1]
 
@@ -1535,8 +1502,8 @@ class SAM3DBody(BaseModel):
         wrist_zero_rot_pose = lowarm_joint_rotations @ self.head_pose.joint_rotation[wrist_twist_joint_idxs]
         
         # Get globals from left & right
-        left_joint_global_rots = lhand_output['atlas']['joint_global_rots']
-        right_joint_global_rots = rhand_output['atlas']['joint_global_rots']
+        left_joint_global_rots = lhand_output['mhr_hand']['joint_global_rots']
+        right_joint_global_rots = rhand_output['mhr_hand']['joint_global_rots']
         pred_global_wrist_rotmat = torch.stack([
             left_joint_global_rots[:, 78],
             right_joint_global_rots[:, 42],
@@ -1551,39 +1518,39 @@ class SAM3DBody(BaseModel):
         valid_angle = angle_difference < thresh_wrist_angle
         valid_angle = valid_angle.unsqueeze(-1)
 
-        body_pose = pose_output['atlas']['body_pose'][:, [41, 43, 42, 31, 33, 32]].unflatten(1, (2, 3))
+        body_pose = pose_output['mhr']['body_pose'][:, [41, 43, 42, 31, 33, 32]].unflatten(1, (2, 3))
         updated_body_pose = torch.where(valid_angle, wrist_xzy, body_pose)
-        pose_output['atlas']['body_pose'][:, [41, 43, 42, 31, 33, 32]] = updated_body_pose.flatten(1, 2)
+        pose_output['mhr']['body_pose'][:, [41, 43, 42, 31, 33, 32]] = updated_body_pose.flatten(1, 2)
 
-        hand_pose = pose_output['atlas']['hand'].unflatten(1, (2, 54))
-        pose_output['atlas']['hand'] = torch.where(valid_angle, updated_hand_pose.unflatten(1, (2, 54)), hand_pose).flatten(1, 2)
+        hand_pose = pose_output['mhr']['hand'].unflatten(1, (2, 54))
+        pose_output['mhr']['hand'] = torch.where(valid_angle, updated_hand_pose.unflatten(1, (2, 54)), hand_pose).flatten(1, 2)
 
-        hand_scale = torch.stack([pose_output['atlas']['scale'][:, 9], pose_output['atlas']['scale'][:, 8]], dim=1)
+        hand_scale = torch.stack([pose_output['mhr']['scale'][:, 9], pose_output['mhr']['scale'][:, 8]], dim=1)
         updated_hand_scale = torch.stack([updated_scale[:, 9], updated_scale[:, 8]], dim=1)
         masked_hand_scale = torch.where(valid_angle.squeeze(-1), updated_hand_scale, hand_scale)
-        pose_output['atlas']['scale'][:, 9] = masked_hand_scale[:, 0]
-        pose_output['atlas']['scale'][:, 8] = masked_hand_scale[:, 1]
+        pose_output['mhr']['scale'][:, 9] = masked_hand_scale[:, 0]
+        pose_output['mhr']['scale'][:, 8] = masked_hand_scale[:, 1]
         
         # Replace shared shape and scale
-        pose_output['atlas']['scale'][:, 18:] = torch.where(valid_angle.squeeze(-1).sum(dim=1, keepdim=True) > 0, (
-            lhand_output['atlas']['scale'][:, 18:] * valid_angle.squeeze(-1)[:, [0]] + rhand_output['atlas']['scale'][:, 18:] * valid_angle.squeeze(-1)[:, [1]]
-        ) / (valid_angle.squeeze(-1).sum(dim=1, keepdim=True) + 1e-8), pose_output['atlas']['scale'][:, 18:])
-        pose_output['atlas']['shape'][:, 40:] = torch.where(valid_angle.squeeze(-1).sum(dim=1, keepdim=True) > 0, (
-            lhand_output['atlas']['shape'][:, 40:] * valid_angle.squeeze(-1)[:, [0]] + rhand_output['atlas']['shape'][:, 40:] * valid_angle.squeeze(-1)[:, [1]]
-        ) / (valid_angle.squeeze(-1).sum(dim=1, keepdim=True) + 1e-8), pose_output['atlas']['shape'][:, 40:])
+        pose_output['mhr']['scale'][:, 18:] = torch.where(valid_angle.squeeze(-1).sum(dim=1, keepdim=True) > 0, (
+            lhand_output['mhr_hand']['scale'][:, 18:] * valid_angle.squeeze(-1)[:, [0]] + rhand_output['mhr_hand']['scale'][:, 18:] * valid_angle.squeeze(-1)[:, [1]]
+        ) / (valid_angle.squeeze(-1).sum(dim=1, keepdim=True) + 1e-8), pose_output['mhr']['scale'][:, 18:])
+        pose_output['mhr']['shape'][:, 40:] = torch.where(valid_angle.squeeze(-1).sum(dim=1, keepdim=True) > 0, (
+            lhand_output['mhr_hand']['shape'][:, 40:] * valid_angle.squeeze(-1)[:, [0]] + rhand_output['mhr_hand']['shape'][:, 40:] * valid_angle.squeeze(-1)[:, [1]]
+        ) / (valid_angle.squeeze(-1).sum(dim=1, keepdim=True) + 1e-8), pose_output['mhr']['shape'][:, 40:])
         
         ########################################################
             
         # Re-run forward
         with torch.no_grad():
             verts, j3d, jcoords, joint_global_rots, joint_params = self.head_pose.mhr_forward(
-                global_trans=pose_output['atlas']['global_rot'] * 0,
-                global_rot=pose_output['atlas']['global_rot'],
-                body_pose_params=pose_output['atlas']['body_pose'],
-                hand_pose_params=pose_output['atlas']['hand'],
-                scale_params=pose_output['atlas']['scale'],
-                shape_params=pose_output['atlas']['shape'],
-                expr_params=pose_output['atlas']['face'],
+                global_trans=pose_output['mhr']['global_rot'] * 0,
+                global_rot=pose_output['mhr']['global_rot'],
+                body_pose_params=pose_output['mhr']['body_pose'],
+                hand_pose_params=pose_output['mhr']['hand'],
+                scale_params=pose_output['mhr']['scale'],
+                shape_params=pose_output['mhr']['shape'],
+                expr_params=pose_output['mhr']['face'],
                 return_keypoints=True,
                 return_joint_coords=True,
                 return_joint_rotations=True,
@@ -1593,17 +1560,17 @@ class SAM3DBody(BaseModel):
             verts[..., [1, 2]] *= -1  # Camera system difference
             j3d[..., [1, 2]] *= -1  # Camera system difference
             jcoords[..., [1, 2]] *= -1
-            pose_output['atlas']['pred_keypoints_3d'] = j3d
-            pose_output['atlas']['pred_vertices'] = verts
-            pose_output['atlas']['pred_joint_coords'] = jcoords
-            pose_output['atlas']['pred_pose_raw'][...] = 0  # pred_pose_raw is not valid anymore
+            pose_output['mhr']['pred_keypoints_3d'] = j3d
+            pose_output['mhr']['pred_vertices'] = verts
+            pose_output['mhr']['pred_joint_coords'] = jcoords
+            pose_output['mhr']['pred_pose_raw'][...] = 0  # pred_pose_raw is not valid anymore
         
         return pose_output, batch_lhand, batch_rhand, lhand_output, rhand_output
     
     def run_keypoint_prompt(self, batch, output, keypoint_prompt):
         image_embeddings = output["image_embeddings"]
         condition_info = output["condition_info"]
-        pose_output = output["atlas"]  # body-only output
+        pose_output = output["mhr"]  # body-only output
         # Use previous estimate as initialization
         prev_estimate = torch.cat(
             [
@@ -1632,7 +1599,7 @@ class SAM3DBody(BaseModel):
         )
         pose_output = pose_output[-1]
 
-        output.update({"atlas": pose_output})
+        output.update({"mhr": pose_output})
         return output, keypoint_prompt
 
     def _get_hand_box(self, pose_output, batch, scale_factor=None):
@@ -1656,10 +1623,10 @@ class SAM3DBody(BaseModel):
             scale_factor = 1.6
         
         ## Get hand 2d KPS
-        left_hand_kps_2d = pose_output["atlas"]["pred_keypoints_2d"][
+        left_hand_kps_2d = pose_output["mhr"]["pred_keypoints_2d"][
             :, left_hand_joint_idx
         ]
-        right_hand_kps_2d = pose_output["atlas"]["pred_keypoints_2d"][
+        right_hand_kps_2d = pose_output["mhr"]["pred_keypoints_2d"][
             :, right_hand_joint_idx
         ]
 

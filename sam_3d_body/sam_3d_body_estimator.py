@@ -180,7 +180,7 @@ class SAM3DBodyEstimator:
             self.thresh_wrist_angle,
         )
 
-        out = pose_output["atlas"]
+        out = pose_output["mhr"]
         out = recursive_to(out, "cpu")
         out = recursive_to(out, "numpy")
         all_out = []

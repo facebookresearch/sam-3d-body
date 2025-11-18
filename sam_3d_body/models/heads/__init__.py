@@ -3,7 +3,8 @@ from .mhr_head import MHRHead
 from .camera_head import PerspectiveHead, WeakPerspectiveHead
 
 
-def build_head(cfg, head_type="atlas46", enable_hand_model=False, default_scale_factor=1.0):
+def build_head(cfg, head_type="mhr", enable_hand_model=False, default_scale_factor=1.0):
+    # TODO: fix atlas46 in config
     if head_type == "atlas46":
         return MHRHead(
             input_dim=cfg.MODEL.DECODER.DIM,
@@ -13,7 +14,7 @@ def build_head(cfg, head_type="atlas46", enable_hand_model=False, default_scale_
             num_hand_comps=32 if not cfg.MODEL.get('DISABLE_HAND_PCA', False) else 54,
             num_shape_comps=cfg.MODEL.ATLAS_HEAD.NUM_SHAPE_COMPS,
             num_scale_comps=cfg.MODEL.ATLAS_HEAD.NUM_SCALE_COMPS,
-            atlas_model_path=cfg.MODEL.ATLAS_HEAD.ATLAS_MODEL_PATH,
+            mhr_model_path=cfg.MODEL.ATLAS_HEAD.ATLAS_MODEL_PATH,
             mesh_type=cfg.MODEL.ATLAS_HEAD.MESH_TYPE,
             fix_kps_eye_and_chin=cfg.MODEL.ATLAS_HEAD.get("FIX_KPS_EYE_AND_CHIN", True),
             znorm_fullbody_scales=cfg.MODEL.ATLAS_HEAD.get(

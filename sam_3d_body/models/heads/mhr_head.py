@@ -7,8 +7,8 @@ import torch
 import torch.nn as nn
 
 from ..modules import rot6d_to_rotmat
-from ..modules.atlas_utils import (
-    atlas46_param_hand_mask,
+from ..modules.mhr_utils import (
+    mhr_param_hand_mask,
     compact_cont_to_model_params_body,
     compact_model_params_to_cont_body,
     compact_cont_to_model_params_hand,
@@ -31,7 +31,7 @@ class MHRHead(nn.Module):
         num_scale_comps: int = 38,
         num_hand_comps: int = 32,
         num_face_comps: int = 72,
-        atlas_model_path: str = "",
+        mhr_model_path: str = "",
         mesh_type: str = "lod3",
         extra_joint_regressor: str = "",
         smpl_model_path: str = "",
@@ -107,10 +107,10 @@ class MHRHead(nn.Module):
         self.mesh_type = mesh_type
 
         # Load scale & hand stuff for HMR
-        self.model_data_dir = atlas_model_path
+        self.model_data_dir = mhr_model_path
         self.num_hand_scale_comps = num_scale_comps - 18
         self.num_hand_pose_comps = num_hand_comps
-        model_dict = load_pickle(os.path.join(atlas_model_path, "params.pkl"))
+        model_dict = load_pickle(os.path.join(mhr_model_path, "params.pkl"))
         self.joint_rotation = nn.Parameter(model_dict['joint_rotation'], requires_grad=False)
         self.scale_mean = nn.Parameter(model_dict['scale_mean'], requires_grad=False)
         self.scale_comps = nn.Parameter(model_dict['scale_comps'][:18 + self.num_hand_scale_comps], requires_grad=False)
@@ -127,7 +127,7 @@ class MHRHead(nn.Module):
         # Load MHR itself
         self.use_torchscript = use_torchscript
         if self.use_torchscript:
-            self.mhr = torch.jit.load(os.path.join(atlas_model_path, "mhr_ts.pt"), map_location=('cuda' if torch.cuda.is_available() else 'cpu'))
+            self.mhr = torch.jit.load(os.path.join(mhr_model_path, "mhr_ts.pt"), map_location=('cuda' if torch.cuda.is_available() else 'cpu'))
         else:
             # TODO: need to be updated
             from MHR.mhr.mhr import MHR
@@ -315,7 +315,7 @@ class MHRHead(nn.Module):
         ### Convert to eulers (and trans)
         pred_pose_euler = compact_cont_to_model_params_body(pred_pose_cont)
         ### Zero-out hands
-        pred_pose_euler[:, atlas46_param_hand_mask] = 0
+        pred_pose_euler[:, mhr_param_hand_mask] = 0
         ### Zero-out jaw
         pred_pose_euler[:, -3:] = 0
 
@@ -347,7 +347,7 @@ class MHRHead(nn.Module):
         if self.detach_face_for_nonparam_losses:
             pred_face_for_forward = pred_face_for_forward.detach()
 
-        # Run everything through atlas
+        # Run everything through mhr
         output = self.mhr_forward(
             global_trans=global_trans,
             global_rot=global_rot_euler,
@@ -378,7 +378,7 @@ class MHRHead(nn.Module):
             "pred_pose_raw": torch.cat(
                 [global_rot_6d, pred_pose_cont], dim=1
             ),  # Both global rot and continuous pose
-            "pred_pose_rotmat": None,  # This normally used for atlas pose param rotmat supervision.
+            "pred_pose_rotmat": None,  # This normally used for mhr pose param rotmat supervision.
             "global_rot": global_rot_euler,
             "body_pose": pred_pose_euler,  # Unused during training
             "shape": pred_shape,
