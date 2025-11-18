@@ -15,7 +15,6 @@ from tqdm import tqdm
 import cv2
 import numpy as np
 import torch
-import joblib 
 from sam_3d_body import load_sam_3d_body, SAM3DBodyEstimator
 from tools.vis_utils import visualize_sample
 
@@ -124,7 +123,8 @@ if __name__ == "__main__":
                         help="Bounding box detection threshold")
     parser.add_argument("--use_mask", action="store_true", default=False,
                         help="Use mask-conditioned prediction (segmentation mask is automatically generated from bbox)")
-    parser.add_argument("--disable_hand_detection", action="store_true", default=False)
+    parser.add_argument("--disable_hand_detection", action="store_true", default=False,
+                        help="Disable hand detection from SAM 3D Body model (use hand location from body decoder instead)")
     args = parser.parse_args()
 
     main(args)
