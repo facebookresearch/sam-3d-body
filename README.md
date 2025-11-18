@@ -115,9 +115,9 @@ The table below shows the SAM 3D Body checkpoints released on [TODO: Update this
 < TODO: Update when we run speedtests >
 Speed measured on an A100 with `torch 2.5.1, cuda 12.4`. See `benchmark.py` for an example on benchmarking (compiling all the model components). Compiling only the image encoder can be more flexible and also provide (a smaller) speed-up (set `compile_image_encoder: True` in the config).
 
-## SAM 3D Body Dataset [TODO: Taosha please add this]
+## SAM 3D Body Dataset
+The SAM 3D Body data is released in [Hugging Face](https://huggingface.co/datasets/facebook/sam-3d-body-dataset). Please follow the [instructions](./data/README.md) to download and process the data.
 
-< Info on the 3D annotations we're releasing >
 
 ### Dataset Loading
 
