@@ -35,7 +35,7 @@ class SAM3DBodyEstimator:
         self.fov_estimator = fov_estimator
         self.prompt_wrists = prompt_wrists
         self.use_hand_box = use_hand_box
-        self.thresh_wrist_angle = 1.2   # we used 1.1 before
+        self.thresh_wrist_angle = 1.2
 
         # For mesh visualization
         self.faces = self.model.head_pose.faces.cpu().numpy()
@@ -205,10 +205,10 @@ class SAM3DBodyEstimator:
                 }
             )
 
+            # TODO: move it into meta_arch class
             pred_keypoints_3d_proj = (
                 all_out[-1]["pred_keypoints_3d"] + all_out[-1]["pred_cam_t"]
             )
-            # pred_keypoints_3d_proj[:, [1, 2]] *= -1
             pred_keypoints_3d_proj[:, [0, 1]] *= all_out[-1]["focal_length"]
             pred_keypoints_3d_proj[:, [0, 1]] = (
                 pred_keypoints_3d_proj[:, [0, 1]]
