@@ -1,16 +1,20 @@
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, Any
 
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from sam_3d_body.data.utils.prepare_batch import prepare_batch
 from sam_3d_body.utils.logging import get_pylogger
-
+import roma
+from sam_3d_body.utils import recursive_to
 from ..backbones import create_backbone
 from ..decoders import build_decoder, build_keypoint_sampler, PromptEncoder
 from ..heads import build_head
 from ..modules.transformer import FFN
+from ..modules.camera_embed import CameraEncoder
+from sam_3d_body.models.modules.atlas_utils import rotation_angle_difference
 
 from .base_model import BaseModel
 
@@ -25,14 +29,76 @@ PROMPT_KEYPOINTS = {  # keypoint_idx: prompt_idx
     },  # all 70 keypoints are supported for prompting
 }
 KEY_BODY = [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 41, 62]  # key body joints for prompting
+KEY_RIGHT_HAND = list(range(21, 42))
 # fmt: on
 
-class SAM3DBody(BaseModel):
+class MLP(nn.Module):
+    # borrowed from DET R
+    """Very simple multi-layer perceptron (also called FFN)"""
 
+    def __init__(self, input_dim, hidden_dim, output_dim, num_layers):
+        super().__init__()
+        self.num_layers = num_layers
+        h = [hidden_dim] * (num_layers - 1)
+        self.layers = nn.ModuleList(
+            nn.Linear(n, k) for n, k in zip([input_dim] + h, h + [output_dim])
+        )
+
+    def forward(self, x):
+        for i, layer in enumerate(self.layers):
+            x = F.relu(layer(x)) if i < self.num_layers - 1 else layer(x)
+        return x
+    
+class PositionEmbeddingRandom(nn.Module):
+    """
+    Positional encoding using random spatial frequencies.
+    """
+
+    def __init__(self, num_pos_feats: int = 64, scale: Optional[float] = None) -> None:
+        super().__init__()
+        if scale is None or scale <= 0.0:
+            scale = 1.0
+        self.register_buffer(
+            "positional_encoding_gaussian_matrix",
+            scale * torch.randn((2, num_pos_feats)),
+        )
+
+    def _pe_encoding(self, coords: torch.Tensor) -> torch.Tensor:
+        """Positionally encode points that are normalized to [0,1]."""
+        # assuming coords are in [0, 1]^2 square and have d_1 x ... x d_n x 2 shape
+        coords = 2 * coords - 1
+        coords = coords @ self.positional_encoding_gaussian_matrix
+        coords = 2 * np.pi * coords
+        # outputs d_1 x ... x d_n x C shape
+        return torch.cat([torch.sin(coords), torch.cos(coords)], dim=-1)
+
+    def forward(self, size: Tuple[int, int]) -> torch.Tensor:
+        """Generate positional encoding for a grid of the specified size."""
+        h, w = size
+        device: Any = self.positional_encoding_gaussian_matrix.device
+        grid = torch.ones((h, w), device=device, dtype=torch.float32)
+        y_embed = grid.cumsum(dim=0) - 0.5
+        x_embed = grid.cumsum(dim=1) - 0.5
+        y_embed = y_embed / h
+        x_embed = x_embed / w
+
+        pe = self._pe_encoding(torch.stack([x_embed, y_embed], dim=-1))
+        return pe.permute(2, 0, 1)  # C x H x W
+
+    def forward_with_coords(
+        self, coords_input: torch.Tensor, image_size: Tuple[int, int]
+    ) -> torch.Tensor:
+        """Positionally encode points that are not normalized to [0,1]."""
+        coords = coords_input.clone()
+        coords[:, :, 0] = coords[:, :, 0] / image_size[1]
+        coords[:, :, 1] = coords[:, :, 1] / image_size[0]
+        return self._pe_encoding(coords.to(torch.float))  # B x N x C
+    
+
+class SAM3DBody(BaseModel):
     pelvis_idx = [9, 10]  # left_hip, right_hip
 
     def _initialze_model(self, estimate_cam_int=False):
-        self.estimate_cam_int = estimate_cam_int
         self.register_buffer(
             "image_mean", torch.tensor(self.cfg.MODEL.IMAGE_MEAN).view(-1, 1, 1), False
         )
@@ -42,47 +108,55 @@ class SAM3DBody(BaseModel):
 
         # Create backbone feature extractor for human crops
         self.backbone = create_backbone(
-            self.cfg.MODEL.BACKBONE.TYPE,
-            self.cfg,
-            pretrained=False,
+            self.cfg.MODEL.BACKBONE.TYPE, self.cfg, pretrained=False
         )
 
         # Create header for pose estimation output
         self.head_pose = build_head(self.cfg, self.cfg.MODEL.PERSON_HEAD.POSE_TYPE)
-        # Initialize pose token with learnable params (not mean pose in SMPL)
+        self.head_pose.hand_pose_comps_ori = nn.Parameter(self.head_pose.hand_pose_comps.clone(), requires_grad=False)
+        self.head_pose.hand_pose_comps.data = torch.eye(54).to(self.head_pose.hand_pose_comps.data).float()
+        
+        # Initialize pose token with learnable params
+        # Note: bias/initial value should be zero-pose in cont, not all-zeros
         self.init_pose = nn.Embedding(1, self.head_pose.npose)
-        if self.cfg.MODEL.PERSON_HEAD.ZERO_POSE_INIT:
-            self.init_pose.weight.data = self.head_pose.get_zero_pose_init(
-                self.cfg.MODEL.PERSON_HEAD.get("ZERO_POSE_INIT_BODY_FACTOR", 1)
-            )
-        else:
-            raise NotImplementedError
 
-        if self.cfg.MODEL.PERSON_HEAD.CAMERA_ENABLE:
-            self.head_camera = build_head(
-                self.cfg, self.cfg.MODEL.PERSON_HEAD.CAMERA_TYPE
-            )
-            self.init_camera = nn.Embedding(1, self.head_camera.ncam)
-            nn.init.zeros_(self.init_camera.weight)
+        # Define header for hand pose estimation
+        self.head_pose_hand = build_head(
+            self.cfg, self.cfg.MODEL.PERSON_HEAD.POSE_TYPE, enable_hand_model=True
+        )
+        self.head_pose_hand.hand_pose_comps_ori = nn.Parameter(self.head_pose_hand.hand_pose_comps.clone(), requires_grad=False)
+        self.head_pose_hand.hand_pose_comps.data = torch.eye(54).to(self.head_pose_hand.hand_pose_comps.data).float()
+        self.init_pose_hand = nn.Embedding(1, self.head_pose_hand.npose)
+
+        self.head_camera = build_head(
+            self.cfg, self.cfg.MODEL.PERSON_HEAD.CAMERA_TYPE
+        )
+        self.init_camera = nn.Embedding(1, self.head_camera.ncam)
+        nn.init.zeros_(self.init_camera.weight)
+
+        self.head_camera_hand = build_head(
+            self.cfg,
+            self.cfg.MODEL.PERSON_HEAD.CAMERA_TYPE,
+            default_scale_factor=self.cfg.MODEL.CAMERA_HEAD.get(
+                "DEFAULT_SCALE_FACTOR_HAND", 1.0
+            ),
+        )
+        self.init_camera_hand = nn.Embedding(1, self.head_camera_hand.ncam)
+        nn.init.zeros_(self.init_camera_hand.weight)
 
         self.camera_type = "perspective"
 
         # Support conditioned information for decoder
-        if self.cfg.MODEL.DECODER.CONDITION_TYPE == "cliff":
-            cond_dim = 3
-        elif self.cfg.MODEL.DECODER.CONDITION_TYPE == "none":
-            cond_dim = 0
-        else:
-            raise ValueError(
-                "Invalid condition type", self.cfg.MODEL.DECODER.CONDITION_TYPE
-            )
-        init_dim = (
-            self.head_pose.npose + cond_dim
-            if not self.cfg.MODEL.PERSON_HEAD.CAMERA_ENABLE
-            else self.head_pose.npose + self.head_camera.ncam + cond_dim
-        )
+        cond_dim = 3
+        init_dim = self.head_pose.npose + self.head_camera.ncam + cond_dim
         self.init_to_token_atlas = nn.Linear(init_dim, self.cfg.MODEL.DECODER.DIM)
         self.prev_to_token_atlas = nn.Linear(
+            init_dim - cond_dim, self.cfg.MODEL.DECODER.DIM
+        )
+        self.init_to_token_atlas_hand = nn.Linear(
+            init_dim, self.cfg.MODEL.DECODER.DIM
+        )
+        self.prev_to_token_atlas_hand = nn.Linear(
             init_dim - cond_dim, self.cfg.MODEL.DECODER.DIM
         )
 
@@ -109,7 +183,11 @@ class SAM3DBody(BaseModel):
             self.keypoint_prompt_sampler = build_keypoint_sampler(
                 self.cfg.MODEL.PROMPT_ENCODER.get("KEYPOINT_SAMPLER", {}),
                 prompt_keypoints=self.prompt_keypoints,
-                keybody_idx=KEY_BODY,
+                keybody_idx=(
+                    KEY_BODY
+                    if not self.cfg.MODEL.PROMPT_ENCODER.get("SAMPLE_HAND", False)
+                    else KEY_RIGHT_HAND
+                ),
             )
             # To keep track of prompting history
             self.prompt_hist = np.zeros(
@@ -125,131 +203,107 @@ class SAM3DBody(BaseModel):
         self.decoder = build_decoder(
             self.cfg.MODEL.DECODER, context_dim=self.backbone.embed_dims
         )
+        # shared config for the two decoders
+        self.decoder_hand = build_decoder(
+            self.cfg.MODEL.DECODER, context_dim=self.backbone.embed_dims
+        )
+        self.hand_pe_layer = PositionEmbeddingRandom(self.backbone.embed_dims // 2)
 
         # Manually convert the torso of the model to fp16.
-        # if self.cfg.TRAIN.USE_FP16:
-        #     self.convert_to_fp16()
-        #     if self.cfg.TRAIN.get("FP16_TYPE", "float16") == "float16":
-        #         self.backbone_dtype = torch.float16
-        #     else:
-        #         self.backbone_dtype = torch.bfloat16
-        # else:
-        #     self.convert_to_fp32()
-        #     self.backbone_dtype = torch.float32
-
-        if self.cfg.MODEL.get("RAY_CONDITION_TYPE", None) is not None:
-            if self.cfg.MODEL.BACKBONE.TYPE in [
-                "vit_b",                 
-                "vit_l",                 
-                "vit_hmr",                 
-                "hmr2",                
-                "vit",                 
-                "vit_hmr_256",                 
-                "vit_hmr_512_384",                 
-            ]:
-                self.ray_cond_emb = nn.Conv2d(
-                    2,
-                    self.backbone.embed_dim,
-                    self.backbone.patch_size,
-                    stride=self.backbone.patch_size,
-                )
-
+        if self.cfg.TRAIN.USE_FP16:
+            self.convert_to_fp16()
+            if self.cfg.TRAIN.get("FP16_TYPE", "float16") == "float16":
+                self.backbone_dtype = torch.float16
             else:
-                assert False, "Not implemented yet"
-
-            # Zero conv
-            torch.nn.init.zeros_(self.ray_cond_emb.weight)
-            torch.nn.init.zeros_(self.ray_cond_emb.bias)
-
-        if self.cfg.MODEL.DECODER.get("DO_KEYPOINT_TOKENS", False):
-            if not self.cfg.MODEL.DECODER.get("DO_KEYPOINT_TOKENS_BODY_ONLY", False):
-                # Do all KPS
-                self.keypoint_embedding_idxs = list(range(70))
-                self.keypoint_embedding = nn.Embedding(
-                    len(self.keypoint_embedding_idxs), self.cfg.MODEL.DECODER.DIM
-                )
-            else:
-                # Just body (including wrist)
-                # fmt: off
-                self.keypoint_embedding_idxs = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,41,62,63,64,65,66,67,68,69]
-                # fmt: on
-                self.keypoint_embedding = nn.Embedding(
-                    len(self.keypoint_embedding_idxs), self.cfg.MODEL.DECODER.DIM
-                )
-
-            if self.cfg.MODEL.DECODER.get("DO_KEYPOINT_TOKENS_2D_KPS_PRED", False):
-                # These tokens also predict 2D KPS
-                self.keypoint_head = FFN(
-                    embed_dims=self.cfg.MODEL.DECODER.DIM,
-                    feedforward_channels=self.cfg.MODEL.DECODER.DIM,
-                    output_dims=2,
-                    num_fcs=2,
-                    add_identity=False,
-                )
-
-        if self.cfg.MODEL.DECODER.get("KEYPOINT_TOKEN_UPDATE", None) in [
-            "v1",
-            "v2",
-        ]:
-            if not self.cfg.MODEL.DECODER.get(
-                "KEYPOINT_TOKEN_UPDATE_COORD_EMB_USE_MLP", False
-            ):
-                # For some reason that escapes me, the backbone's pos embs are 1280, while the decoder is 1024.
-                self.keypoint_posemb_linear = nn.Linear(
-                    self.backbone.embed_dims, self.cfg.MODEL.DECODER.DIM
-                )
-            else:
-                # Shared for now
-                self.keypoint_posemb_linear = FFN(
-                    embed_dims=2,
-                    feedforward_channels=self.cfg.MODEL.DECODER.DIM,
-                    output_dims=self.cfg.MODEL.DECODER.DIM,
-                    num_fcs=2,
-                    add_identity=False,
-                )
-            if self.cfg.MODEL.DECODER.KEYPOINT_TOKEN_UPDATE == "v2":
-                self.keypoint_feat_linear = nn.Linear(
-                    self.backbone.embed_dims, self.cfg.MODEL.DECODER.DIM
-                )
+                self.backbone_dtype = torch.bfloat16
         else:
-            assert self.cfg.MODEL.DECODER.get("KEYPOINT_TOKEN_UPDATE", None) is None
+            self.backbone_dtype = torch.float32
 
-        if self.cfg.MODEL.DECODER.get("DO_KEYPOINT3D_TOKENS", False):
-            if not self.cfg.MODEL.DECODER.get("DO_KEYPOINT3D_TOKENS_BODY_ONLY", False):
-                # Do all KPS
-                self.keypoint3d_embedding_idxs = list(range(70))
-                self.keypoint3d_embedding = nn.Embedding(
-                    len(self.keypoint3d_embedding_idxs), self.cfg.MODEL.DECODER.DIM
-                )
-            else:
-                # Just body (including wrist)
-                # fmt: off
-                self.keypoint3d_embedding_idxs = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,41,62,63,64,65,66,67,68,69]
-                # fmt: on
-                self.keypoint3d_embedding = nn.Embedding(
-                    len(self.keypoint3d_embedding_idxs), self.cfg.MODEL.DECODER.DIM
-                )
+        self.ray_cond_emb = CameraEncoder(
+            self.backbone.embed_dim,
+            self.backbone.patch_size,
+        )
+        self.ray_cond_emb_hand = CameraEncoder(
+            self.backbone.embed_dim,
+            self.backbone.patch_size,
+        )
 
-            if self.cfg.MODEL.DECODER.get("DO_KEYPOINT_TOKENS_3D_KPS_PRED", False):
-                # These tokens also predict 2D KPS
-                self.keypoint3d_head = FFN(
+        self.keypoint_embedding_idxs = list(range(70))
+        self.keypoint_embedding = nn.Embedding(
+            len(self.keypoint_embedding_idxs), self.cfg.MODEL.DECODER.DIM
+        )
+        self.keypoint_embedding_idxs_hand = list(range(70))
+        self.keypoint_embedding_hand = nn.Embedding(
+            len(self.keypoint_embedding_idxs_hand), self.cfg.MODEL.DECODER.DIM
+        )
+
+        if self.cfg.MODEL.DECODER.get("DO_HAND_DETECT_TOKENS", False):
+            self.hand_box_embedding = nn.Embedding(
+                2, self.cfg.MODEL.DECODER.DIM
+            )  # for two hands
+            # decice if there is left or right hand inside the image
+            self.hand_cls_embed = nn.Linear(self.cfg.MODEL.DECODER.DIM, 2)
+            self.bbox_embed = MLP(
+                self.cfg.MODEL.DECODER.DIM, self.cfg.MODEL.DECODER.DIM, 4, 3
+            )
+
+            if self.cfg.MODEL.DECODER.get("HAND_DETECT_DO_UNCERT", False):
+                self.hand_box_logsigma_embed = FFN(
                     embed_dims=self.cfg.MODEL.DECODER.DIM,
                     feedforward_channels=self.cfg.MODEL.DECODER.DIM,
-                    output_dims=3,
+                    output_dims=1,
                     num_fcs=2,
                     add_identity=False,
                 )
 
-        if self.cfg.MODEL.DECODER.get("KEYPOINT3D_TOKEN_UPDATE", None) in ["v1"]:
-            # v1 is to use an MLP embedding, root normalized
-            # Shared for now
-            self.keypoint3d_posemb_linear = FFN(
-                embed_dims=3,
-                feedforward_channels=self.cfg.MODEL.DECODER.DIM,
-                output_dims=self.cfg.MODEL.DECODER.DIM,
-                num_fcs=2,
-                add_identity=False,
-            )
+        self.keypoint_posemb_linear = FFN(
+            embed_dims=2,
+            feedforward_channels=self.cfg.MODEL.DECODER.DIM,
+            output_dims=self.cfg.MODEL.DECODER.DIM,
+            num_fcs=2,
+            add_identity=False,
+        )
+        self.keypoint_posemb_linear_hand = FFN(
+            embed_dims=2,
+            feedforward_channels=self.cfg.MODEL.DECODER.DIM,
+            output_dims=self.cfg.MODEL.DECODER.DIM,
+            num_fcs=2,
+            add_identity=False,
+        )
+        self.keypoint_feat_linear = nn.Linear(
+            self.backbone.embed_dims, self.cfg.MODEL.DECODER.DIM
+        )
+        self.keypoint_feat_linear_hand = nn.Linear(
+            self.backbone.embed_dims, self.cfg.MODEL.DECODER.DIM
+        )
+
+        # Do all KPS
+        self.keypoint3d_embedding_idxs = list(range(70))
+        self.keypoint3d_embedding = nn.Embedding(
+            len(self.keypoint3d_embedding_idxs), self.cfg.MODEL.DECODER.DIM
+        )
+
+        # Assume always do full body for the hand decoder
+        self.keypoint3d_embedding_idxs_hand = list(range(70))
+        self.keypoint3d_embedding_hand = nn.Embedding(
+            len(self.keypoint3d_embedding_idxs_hand), self.cfg.MODEL.DECODER.DIM
+        )
+
+        self.keypoint3d_posemb_linear = FFN(
+            embed_dims=3,
+            feedforward_channels=self.cfg.MODEL.DECODER.DIM,
+            output_dims=self.cfg.MODEL.DECODER.DIM,
+            num_fcs=2,
+            add_identity=False,
+        )
+        self.keypoint3d_posemb_linear_hand = FFN(
+            embed_dims=3,
+            feedforward_channels=self.cfg.MODEL.DECODER.DIM,
+            output_dims=self.cfg.MODEL.DECODER.DIM,
+            num_fcs=2,
+            add_identity=False,
+        )
+
 
     def _get_decoder_condition(self, batch: Dict) -> Optional[torch.Tensor]:
         num_person = batch["img"].shape[1]
@@ -270,7 +324,6 @@ class SAM3DBody(BaseModel):
                 .expand(-1, num_person, -1, -1)
                 .contiguous()
             )[:, 0, 0]
-
             if not self.cfg.MODEL.DECODER.get("USE_INTRIN_CENTER", False):
                 condition_info = torch.cat(
                     [cx - img_w / 2.0, cy - img_h / 2.0, b], dim=-1
@@ -345,6 +398,7 @@ class SAM3DBody(BaseModel):
         token_embeddings = self.init_to_token_atlas(init_input).view(
             batch_size, 1, -1
         )  # B x 1 x 1024 (linear layered)
+
         num_pose_token = token_embeddings.shape[1]
         assert num_pose_token == 1
 
@@ -360,27 +414,33 @@ class SAM3DBody(BaseModel):
 
             if self.cfg.MODEL.BACKBONE.TYPE in [
                 "vit_hmr",
+                "hmr2",
+                "vit",
                 "vit_b",
                 "vit_l",
+                "vit_hmr_decouple",
             ]:
                 # HMR2.0 backbone (ViTPose) assumes a different aspect ratio as input size
-                image_augment = self.prompt_encoder.get_dense_pe((16, 16))
-                image_augment = image_augment[:, :, :, 2:-2]
-            elif self.cfg.MODEL.BACKBONE.TYPE in ["vit_hmr_512_384"]:
+                image_augment = self.prompt_encoder.get_dense_pe((16, 16))[
+                    :, :, :, 2:-2
+                ]
+            elif self.cfg.MODEL.BACKBONE.TYPE in [
+                "vit_hmr_512_384",
+                "vit_hmr_decouple_512_384",
+            ]:
                 # HMR2.0 backbone (ViTPose) assumes a different aspect ratio as input size
-                image_augment = self.prompt_encoder.get_dense_pe((32, 32))
-                image_augment = image_augment[:, :, :, 4:-4]
+                image_augment = self.prompt_encoder.get_dense_pe((32, 32))[
+                    :, :, :, 4:-4
+                ]
             else:
                 image_augment = self.prompt_encoder.get_dense_pe(
                     image_embeddings.shape[-2:]
                 )  # (1, C, H, W)
 
-            if self.cfg.MODEL.get("RAY_CONDITION_TYPE", None) in [
-                "decoder_v1",
-                "decoder_v2",
-            ]:
-                assert "ray_cond" in batch
-                image_augment = image_augment + batch["ray_cond"].to(image_augment)
+            if self.cfg.MODEL.get("RAY_CONDITION_TYPE", None) == "decoder_v3":
+                image_embeddings = self.ray_cond_emb(
+                    image_embeddings, batch["ray_cond"]
+                )
 
             # To start, keypoints is all [0, 0, -2]. The points get sent into self.pe_layer._pe_encoding,
             # the labels determine the embedding weight (special one for -2, -1, then each of joint.)
@@ -406,24 +466,20 @@ class SAM3DBody(BaseModel):
                 prev_embeddings  # No embedding for current? ig it has its self.init_to_token_atlas?
             )
             token_augment[:, (num_pose_token + 1) :] = prompt_embeddings
-            # token_mask = torch.ones(batch_size, token_embeddings.shape[1]).to(prompt_mask)
-            # token_mask[:, num_pose_token:] = prompt_mask
-            # token_mask = token_mask.to(token_embeddings.dtype)  # bool to float
-            # token_mask.requires_grad = False
             token_mask = None
 
-            if self.cfg.MODEL.DECODER.get("DO_KEYPOINT_TOKENS", False):
-                # Put in a token for each keypoint
-                kps_emb_start_idx = token_embeddings.shape[1]
+            if self.cfg.MODEL.DECODER.get("DO_HAND_DETECT_TOKENS", False):
+                # Put in a token for each hand
+                hand_det_emb_start_idx = token_embeddings.shape[1]
                 token_embeddings = torch.cat(
                     [
                         token_embeddings,
-                        self.keypoint_embedding.weight[None, :, :].repeat(
+                        self.hand_box_embedding.weight[None, :, :].repeat(
                             batch_size, 1, 1
                         ),
                     ],
                     dim=1,
-                )  # B x 3 + 70 x 1024
+                )  # B x 5 + 70 x 1024
                 # No positional embeddings
                 token_augment = torch.cat(
                     [
@@ -433,8 +489,26 @@ class SAM3DBody(BaseModel):
                         ),
                     ],
                     dim=1,
-                )  # B x 3 + 70 x 1024
+                )  # B x 5 + 70 x 1024
 
+            assert self.cfg.MODEL.DECODER.get("DO_KEYPOINT_TOKENS", False)
+            # Put in a token for each keypoint
+            kps_emb_start_idx = token_embeddings.shape[1]
+            token_embeddings = torch.cat(
+                [
+                    token_embeddings,
+                    self.keypoint_embedding.weight[None, :, :].repeat(batch_size, 1, 1),
+                ],
+                dim=1,
+            )  # B x 3 + 70 x 1024
+            # No positional embeddings
+            token_augment = torch.cat(
+                [
+                    token_augment,
+                    torch.zeros_like(token_embeddings[:, token_augment.shape[1] :, :]),
+                ],
+                dim=1,
+            )  # B x 3 + 70 x 1024
             if self.cfg.MODEL.DECODER.get("DO_KEYPOINT3D_TOKENS", False):
                 # Put in a token for each keypoint
                 kps3d_emb_start_idx = token_embeddings.shape[1]
@@ -458,27 +532,33 @@ class SAM3DBody(BaseModel):
                     dim=1,
                 )  # B x 3 + 70 + 70 x 1024
 
+            assert not self.cfg.MODEL.DECODER.get("SEPARATE_AUX_TOKENS_3D", False)
+
         if not self.cfg.MODEL.DECODER.get("DO_INTERM_PREDS", False):
-            tokens = self.decoder(
-                token_embeddings,
-                image_embeddings,
-                token_augment,
-                image_augment,
-                token_mask,
-            )
-            pose_token = tokens[:, 0]
+            assert False, "Not come here, we do interm preds"
+            # tokens = self.decoder(
+            #     token_embeddings,
+            #     image_embeddings,
+            #     token_augment,
+            #     image_augment,
+            #     token_mask,
+            # )
+            # pose_token = tokens[:, 0]
 
-            # Get pose outputs (atlas parameters)
-            pose_output = self.head_pose(pose_token, init_pose.view(batch_size, -1))
-            if hasattr(self, "head_camera"):
-                pred_cam = self.head_camera(
-                    pose_token, init_camera.view(batch_size, -1)
-                )
-                pose_output["pred_cam"] = pred_cam
+            # # Get pose outputs (atlas parameters)
+            # pose_output = self.head_pose(pose_token, init_pose.view(batch_size, -1))
+            # if hasattr(self, "head_camera"):
+            #     pred_cam = self.head_camera(
+            #         pose_token, init_camera.view(batch_size, -1)
+            #     )
+            #     pose_output["pred_cam"] = pred_cam
 
-            pose_output = self.camera_project(pose_output, batch, full_output)
+            # pose_output = self.camera_project(pose_output, batch, full_output)
         else:
             # We're doing intermediate model predictions
+            # Yes, there's an easier way to do this, which is just to get the output features
+            # and decode them here, but we may want to use predictions inside the decoder, so..
+
             def token_to_pose_output_fn(tokens, prev_pose_output, layer_idx):
                 # Get the pose token
                 pose_token = tokens[:, 0]
@@ -506,7 +586,6 @@ class SAM3DBody(BaseModel):
 
                 # Get pose outputs (atlas parameters)
                 pose_output = self.head_pose(pose_token, prev_pose)
-
                 # Get Camera Translation
                 if hasattr(self, "head_camera"):
                     pred_cam = self.head_camera(pose_token, prev_camera)
@@ -516,12 +595,11 @@ class SAM3DBody(BaseModel):
 
                 # Get 2D KPS in crop
                 pose_output["pred_keypoints_2d_cropped"] = self._full_to_crop(
-                    batch, pose_output["pred_keypoints_2d"]
+                    batch, pose_output["pred_keypoints_2d"], self.body_batch_idx
                 )
-
+                
                 return pose_output
 
-            keypoint_token_update_fn = None
             if self.cfg.MODEL.DECODER.get("KEYPOINT_TOKEN_UPDATE", None) in [
                 "v1",
                 "v2",
@@ -529,188 +607,24 @@ class SAM3DBody(BaseModel):
             ]:
                 # For this one, we're going to take the projected 2D KPS, get posembs
                 # (prompt encoder style, and set that as the keypoint posemb)
-                def keypoint_token_update_fn(
-                    token_embeddings, token_augment, pose_output, layer_idx
-                ):
-                    # It's already after the last layer, we're done.
-                    if layer_idx == len(self.decoder.layers) - 1:
-                        return token_embeddings, token_augment, pose_output, layer_idx
-
-                    # Clone
-                    token_embeddings = token_embeddings.clone()
-                    token_augment = token_augment.clone()
-
-                    num_keypoints = self.keypoint_embedding.weight.shape[0]
-
-                    # Get current 2D KPS predictions
-                    pred_keypoints_2d_cropped = pose_output[
-                        "pred_keypoints_2d_cropped"
-                    ].clone()  # These are -0.5 ~ 0.5
-                    pred_keypoints_2d_depth = pose_output[
-                        "pred_keypoints_2d_depth"
-                    ].clone()
-
-                    # Optionally detach them
-                    if self.cfg.MODEL.DECODER.get(
-                        "KEYPOINT_TOKEN_UPDATE_DETACH_KPS", True
-                    ):
-                        pred_keypoints_2d_cropped = pred_keypoints_2d_cropped.detach()
-                        pred_keypoints_2d_depth = pred_keypoints_2d_depth.detach()
-
-                    # Get the keypoints we're using here
-                    pred_keypoints_2d_cropped = pred_keypoints_2d_cropped[
-                        :, self.keypoint_embedding_idxs
-                    ]
-                    pred_keypoints_2d_depth = pred_keypoints_2d_depth[
-                        :, self.keypoint_embedding_idxs
-                    ]
-
-                    # Get 2D KPS to be 0 ~ 1
-                    pred_keypoints_2d_cropped_01 = pred_keypoints_2d_cropped + 0.5
-
-                    # Get a mask of those that are 1) beyond image boundaries or 2) behind the camera
-                    invalid_mask = (
-                        (pred_keypoints_2d_cropped_01[:, :, 0] < 0)
-                        | (pred_keypoints_2d_cropped_01[:, :, 0] > 1)
-                        | (pred_keypoints_2d_cropped_01[:, :, 1] < 0)
-                        | (pred_keypoints_2d_cropped_01[:, :, 1] > 1)
-                        | (pred_keypoints_2d_depth[:, :] < 1e-5)
-                    )
-
-                    # Run them through the prompt encoder's pos emb function
-                    if not self.cfg.MODEL.DECODER.get(
-                        "KEYPOINT_TOKEN_UPDATE_COORD_EMB_USE_MLP", False
-                    ):
-                        pred_keypoints_2d_cropped_emb = (
-                            self.prompt_encoder.pe_layer._pe_encoding(
-                                pred_keypoints_2d_cropped_01
-                            )
-                        )
-                        # Zero invalid pos embs out
-                        pred_keypoints_2d_cropped_emb = (
-                            pred_keypoints_2d_cropped_emb * (~invalid_mask[:, :, None])
-                        )
-                        # Put them in
-                        token_augment[
-                            :, kps_emb_start_idx : kps_emb_start_idx + num_keypoints, :
-                        ] = self.keypoint_posemb_linear(pred_keypoints_2d_cropped_emb)
-                    else:
-                        token_augment[
-                            :, kps_emb_start_idx : kps_emb_start_idx + num_keypoints, :
-                        ] = self.keypoint_posemb_linear(pred_keypoints_2d_cropped) * (
-                            ~invalid_mask[:, :, None]
-                        )
-
-                    # Also maybe update token_embeddings with the grid sampled 2D feature.
-                    # Remember that pred_keypoints_2d_cropped are -0.5 ~ 0.5. We want -1 ~ 1
-                    if self.cfg.MODEL.DECODER.KEYPOINT_TOKEN_UPDATE in ["v2", "v3"]:
-                        # Sample points...
-                        ## Get sampling points
-                        pred_keypoints_2d_cropped_sample_points = (
-                            pred_keypoints_2d_cropped * 2
-                        )
-                        if self.cfg.MODEL.BACKBONE.TYPE in [
-                            "vit_hmr",
-                            "vit_b",
-                            "vit_l",
-                            "vit_hmr_512_384",
-                        ]:
-                            # Need to go from 256 x 256 coords to 256 x 192 (HW) because image_embeddings is 16x12
-                            # Aka, for x, what was normally -1 ~ 1 for 256 should be -16/12 ~ 16/12 (since to sample at original 256, need to overflow)
-                            pred_keypoints_2d_cropped_sample_points[:, :, 0] = (
-                                pred_keypoints_2d_cropped_sample_points[:, :, 0]
-                                / 12
-                                * 16
-                            )
-
-                        if self.cfg.MODEL.DECODER.KEYPOINT_TOKEN_UPDATE in ["v2"]:
-                            # Version 2 is projecting & bilinear sampling
-                            pred_keypoints_2d_cropped_feats = (
-                                F.grid_sample(
-                                    image_embeddings,
-                                    pred_keypoints_2d_cropped_sample_points[
-                                        :, :, None, :
-                                    ],  # -1 ~ 1, xy
-                                    mode="bilinear",
-                                    padding_mode="zeros",
-                                    align_corners=False,
-                                )
-                                .squeeze(3)
-                                .permute(0, 2, 1)
-                            )  # B x kps x C
-                            # Zero out invalid locations...
-                            pred_keypoints_2d_cropped_feats = (
-                                pred_keypoints_2d_cropped_feats
-                                * (~invalid_mask[:, :, None])
-                            )
-                            # This is ADDING
-                            token_embeddings = token_embeddings.clone()
-                            token_embeddings[
-                                :,
-                                kps_emb_start_idx : kps_emb_start_idx
-                                + num_keypoints,
-                                :,
-                            ] += self.keypoint_feat_linear(
-                                pred_keypoints_2d_cropped_feats
-                            )
-
-                    return token_embeddings, token_augment, pose_output, layer_idx
-
+                kp_token_update_fn = self.keypoint_token_update_fn
             else:
-                assert self.cfg.MODEL.DECODER.get("KEYPOINT_TOKEN_UPDATE", None) is None
+                kp_token_update_fn = None
 
             # Now for 3D
-            keypoint3d_token_update_fn = None
             if self.cfg.MODEL.DECODER.get("KEYPOINT3D_TOKEN_UPDATE", None) in ["v1"]:
-
-                def keypoint3d_token_update_fn(
-                    token_embeddings, token_augment, pose_output, layer_idx
-                ):
-                    # It's already after the last layer, we're done.
-                    if layer_idx == len(self.decoder.layers) - 1:
-                        return token_embeddings, token_augment, pose_output, layer_idx
-
-                    num_keypoints3d = self.keypoint3d_embedding.weight.shape[0]
-
-                    # Get current 3D kps predictions
-                    pred_keypoints_3d = pose_output["pred_keypoints_3d"].clone()
-
-                    # Now, pelvis normalize
-                    pred_keypoints_3d = (
-                        pred_keypoints_3d
-                        - (
-                            pred_keypoints_3d[:, [self.pelvis_idx[0]], :]
-                            + pred_keypoints_3d[:, [self.pelvis_idx[1]], :]
-                        )
-                        / 2
-                    )
-
-                    # Get the kps we care about, _after_ pelvis norm
-                    pred_keypoints_3d = pred_keypoints_3d[
-                        :, self.keypoint3d_embedding_idxs
-                    ]
-
-                    # Run through embedding MLP & put in
-                    token_augment = token_augment.clone()
-                    token_augment[
-                        :,
-                        kps3d_emb_start_idx : kps3d_emb_start_idx + num_keypoints3d,
-                        :,
-                    ] = self.keypoint3d_posemb_linear(pred_keypoints_3d)
-
-                    return token_embeddings, token_augment, pose_output, layer_idx
-
+                kp3d_token_update_fn = self.keypoint3d_token_update_fn
             else:
-                assert (
-                    self.cfg.MODEL.DECODER.get("KEYPOINT3D_TOKEN_UPDATE", None) is None
-                )
+                kp3d_token_update_fn = None
 
-            # Combine the 2D and 3D functions
+            # Combine the 2D and 3D functionse
             def keypoint_token_update_fn_comb(*args):
-                if keypoint_token_update_fn is not None:
-                    args = keypoint_token_update_fn(*args)
-                if keypoint3d_token_update_fn is not None:
-                    args = keypoint3d_token_update_fn(*args)
+                if kp_token_update_fn is not None:
+                    args = kp_token_update_fn(
+                        kps_emb_start_idx, image_embeddings, *args
+                    )
+                if kp3d_token_update_fn is not None:
+                    args = kp3d_token_update_fn(kps3d_emb_start_idx, *args)
                 return args
 
             pose_token, pose_output = self.decoder(
@@ -723,10 +637,316 @@ class SAM3DBody(BaseModel):
                 keypoint_token_update_fn=keypoint_token_update_fn_comb,
             )
 
-        return pose_token, pose_output
+        if self.cfg.MODEL.DECODER.get("DO_HAND_DETECT_TOKENS", False):
+            return (
+                pose_token[:, hand_det_emb_start_idx : hand_det_emb_start_idx + 2],
+                pose_output,
+            )
+        else:
+            return pose_token, pose_output
 
-    def get_atlas_output(self, batch, return_keypoints):
-        gt_atlas_output = self.head_pose.mhr_forward(
+    def forward_decoder_hand(
+        self,
+        image_embeddings: torch.Tensor,
+        init_estimate: Optional[torch.Tensor] = None,
+        keypoints: Optional[torch.Tensor] = None,
+        prev_estimate: Optional[torch.Tensor] = None,
+        condition_info: Optional[torch.Tensor] = None,
+        batch=None,
+        full_output=None,
+    ):
+        """
+        Args:
+            image_embeddings: image features from the backbone, shape (B, C, H, W)
+            init_estimate: initial estimate to be refined on, shape (B, 1, C)
+            keypoints: optional prompt input, shape (B, N, 3),
+                3 for coordinates (x,y) + label.
+                (x, y) should be normalized to range [0, 1].
+                label==-1 indicates incorrect points,
+                label==-2 indicates invalid points
+            prev_estimate: optional prompt input, shape (B, 1, C),
+                previous estimate for pose refinement.
+            condition_info: optional condition information that is concatenated with
+                the input tokens, shape (B, c)
+        """
+        batch_size = image_embeddings.shape[0]
+
+        # Initial estimation for residual prediction.
+        if init_estimate is None:
+            init_pose = self.init_pose_hand.weight.expand(batch_size, -1).unsqueeze(
+                dim=1
+            )
+            if hasattr(self, "init_camera_hand"):
+                init_camera = self.init_camera_hand.weight.expand(
+                    batch_size, -1
+                ).unsqueeze(dim=1)
+
+            init_estimate = (
+                init_pose
+                if not hasattr(self, "init_camera_hand")
+                else torch.cat([init_pose, init_camera], dim=-1)
+            )  # This is basically pose & camera translation at the end. B x 1 x (404 + 3)
+
+        if condition_info is not None:
+            init_input = torch.cat(
+                [condition_info.view(batch_size, 1, -1), init_estimate], dim=-1
+            )  # B x 1 x 410 (this is with the CLIFF condition)
+        else:
+            init_input = init_estimate
+        token_embeddings = self.init_to_token_atlas_hand(init_input).view(
+            batch_size, 1, -1
+        )  # B x 1 x 1024 (linear layered)
+        num_pose_token = token_embeddings.shape[1]
+        assert num_pose_token == 1  # TODO: extend to multiple pose token (multi-hmr)
+
+        image_augment, token_augment, token_mask = None, None, None
+        if hasattr(self, "prompt_encoder") and keypoints is not None:
+            if prev_estimate is None:
+                # Use initial embedding if no previous embedding
+                prev_estimate = init_estimate
+            # Previous estimate w/o the CLIFF condition.
+            prev_embeddings = self.prev_to_token_atlas_hand(prev_estimate).view(
+                batch_size, 1, -1
+            )  # 407 -> B x 1 x 1024; linear layer-ed
+
+            if self.cfg.MODEL.BACKBONE.TYPE in [
+                "vit_hmr",
+                "hmr2",
+                "vit",
+                "vit_b",
+                "vit_l",
+                "vit_hmr_decouple",
+            ]:
+                # HMR2.0 backbone (ViTPose) assumes a different aspect ratio as input size
+                image_augment = self.hand_pe_layer((16, 16)).unsqueeze(0)[:, :, :, 2:-2]
+            elif self.cfg.MODEL.BACKBONE.TYPE in [
+                "vit_hmr_512_384",
+                "vit_hmr_decouple_512_384",
+            ]:
+                # HMR2.0 backbone (ViTPose) assumes a different aspect ratio as input size
+                image_augment = self.hand_pe_layer((32, 32)).unsqueeze(0)[:, :, :, 4:-4]
+            else:
+                image_augment = self.hand_pe_layer(
+                    image_embeddings.shape[-2:]
+                ).unsqueeze(
+                    0
+                )  # (1, C, H, W)
+
+            if self.cfg.MODEL.get("RAY_CONDITION_TYPE", None) == "decoder_v3":
+                image_embeddings = self.ray_cond_emb_hand(
+                    image_embeddings, batch["ray_cond_hand"]
+                )
+
+            # To start, keypoints is all [0, 0, -2]. The points get sent into self.pe_layer._pe_encoding,
+            # the labels determine the embedding weight (special one for -2, -1, then each of joint.)
+            prompt_embeddings, prompt_mask = self.prompt_encoder(
+                keypoints=keypoints
+            )  # B x 1 x 1280
+            prompt_embeddings = self.prompt_to_token(
+                prompt_embeddings
+            )  # Linear layered: B x 1 x 1024
+
+            # Concatenate pose tokens and prompt embeddings as decoder input
+            token_embeddings = torch.cat(
+                [
+                    token_embeddings,
+                    prev_embeddings,
+                    prompt_embeddings,
+                ],
+                dim=1,
+            )
+
+            token_augment = torch.zeros_like(token_embeddings)
+            token_augment[:, [num_pose_token]] = (
+                prev_embeddings  # No embedding for current? ig it has its self.init_to_token_atlas?
+            )
+            token_augment[:, (num_pose_token + 1) :] = prompt_embeddings
+            token_mask = None
+
+            if self.cfg.MODEL.DECODER.get("DO_HAND_DETECT_TOKENS", False):
+                # Put in a token for each hand
+                hand_det_emb_start_idx = token_embeddings.shape[1]
+                token_embeddings = torch.cat(
+                    [
+                        token_embeddings,
+                        self.hand_box_embedding.weight[None, :, :].repeat(
+                            batch_size, 1, 1
+                        ),
+                    ],
+                    dim=1,
+                )  # B x 5 + 70 x 1024
+                # No positional embeddings
+                token_augment = torch.cat(
+                    [
+                        token_augment,
+                        torch.zeros_like(
+                            token_embeddings[:, token_augment.shape[1] :, :]
+                        ),
+                    ],
+                    dim=1,
+                )  # B x 5 + 70 x 1024
+
+            assert self.cfg.MODEL.DECODER.get("DO_KEYPOINT_TOKENS", False)
+            # Put in a token for each keypoint
+            kps_emb_start_idx = token_embeddings.shape[1]
+            token_embeddings = torch.cat(
+                [
+                    token_embeddings,
+                    self.keypoint_embedding_hand.weight[None, :, :].repeat(
+                        batch_size, 1, 1
+                    ),
+                ],
+                dim=1,
+            )  # B x 3 + 70 x 1024
+            # No positional embeddings
+            token_augment = torch.cat(
+                [
+                    token_augment,
+                    torch.zeros_like(token_embeddings[:, token_augment.shape[1] :, :]),
+                ],
+                dim=1,
+            )  # B x 3 + 70 x 1024
+
+            if self.cfg.MODEL.DECODER.get("DO_KEYPOINT3D_TOKENS", False):
+                # Put in a token for each keypoint
+                kps3d_emb_start_idx = token_embeddings.shape[1]
+                token_embeddings = torch.cat(
+                    [
+                        token_embeddings,
+                        self.keypoint3d_embedding_hand.weight[None, :, :].repeat(
+                            batch_size, 1, 1
+                        ),
+                    ],
+                    dim=1,
+                )  # B x 3 + 70 + 70 x 1024
+                # No positional embeddings
+                token_augment = torch.cat(
+                    [
+                        token_augment,
+                        torch.zeros_like(
+                            token_embeddings[:, token_augment.shape[1] :, :]
+                        ),
+                    ],
+                    dim=1,
+                )  # B x 3 + 70 + 70 x 1024
+
+            assert not self.cfg.MODEL.DECODER.get("SEPARATE_AUX_TOKENS_3D", False)
+
+        if not self.cfg.MODEL.DECODER.get("DO_INTERM_PREDS", False):
+            assert False, "Not come here, we do interm preds"
+            # tokens = self.decoder(
+            #     token_embeddings,
+            #     image_embeddings,
+            #     token_augment,
+            #     image_augment,
+            #     token_mask,
+            # )
+            # pose_token = tokens[:, 0]
+
+            # # Get pose outputs (atlas parameters)
+            # pose_output = self.head_pose(pose_token, init_pose.view(batch_size, -1))
+            # if hasattr(self, "head_camera"):
+            #     pred_cam = self.head_camera(
+            #         pose_token, init_camera.view(batch_size, -1)
+            #     )
+            #     pose_output["pred_cam"] = pred_cam
+
+            # pose_output = self.camera_project(pose_output, batch, full_output)
+        else:
+            # We're doing intermediate model predictions
+            # Yes, there's an easier way to do this, which is just to get the output features
+            # and decode them here, but we may want to use predictions inside the decoder, so..
+
+            def token_to_pose_output_fn(tokens, prev_pose_output, layer_idx):
+                # Get the pose token
+                pose_token = tokens[:, 0]
+
+                # Pose & camera are done residually. Optionally, we may choose to make their predictions
+                # residual through the decoder layers.
+                if (
+                    self.cfg.MODEL.DECODER.get("DO_INTERM_RESIDUAL_PRED", False)
+                    and prev_pose_output is not None
+                ):
+                    # TODO (jinhyun1): Detach or not detach? Also, probably shouldn't .clone(), but I'm terrified of in-place
+                    prev_pose = torch.cat(
+                        [
+                            prev_pose_output["pred_pose_raw"],
+                            prev_pose_output["shape"],
+                            prev_pose_output["scale"],
+                            prev_pose_output["hand"],
+                            prev_pose_output["face"],
+                        ],
+                        dim=1,
+                    ).clone()
+                    prev_camera = prev_pose_output["pred_cam"].clone()
+                else:
+                    prev_pose = init_pose.view(batch_size, -1)
+                    prev_camera = init_camera.view(batch_size, -1)
+
+                # Get pose outputs (atlas parameters)
+                pose_output = self.head_pose_hand(pose_token, prev_pose)
+                
+                # Get Camera Translation
+                if hasattr(self, "head_camera_hand"):
+                    pred_cam = self.head_camera_hand(pose_token, prev_camera)
+                    pose_output["pred_cam"] = pred_cam
+                # Run camera projection
+                pose_output = self.camera_project_hand(pose_output, batch, full_output)
+
+                # Get 2D KPS in crop (we don't need it usually, but it's cheap to compute anyway so why not)
+                pose_output["pred_keypoints_2d_cropped"] = self._full_to_crop(
+                    batch, pose_output["pred_keypoints_2d"], self.hand_batch_idx
+                )
+
+                return pose_output
+
+            if self.cfg.MODEL.DECODER.get("KEYPOINT_TOKEN_UPDATE", None) in [
+                "v1",
+                "v2",
+                "v3",
+            ]:
+                # For this one, we're going to take the projected 2D KPS, get posembs
+                # (prompt encoder style, and set that as the keypoint posemb)
+                kp_token_update_fn = self.keypoint_token_update_fn_hand
+            else:
+                kp_token_update_fn = None
+
+            # Now for 3D
+            if self.cfg.MODEL.DECODER.get("KEYPOINT3D_TOKEN_UPDATE", None) in ["v1"]:
+                kp3d_token_update_fn = self.keypoint3d_token_update_fn_hand
+            else:
+                kp3d_token_update_fn = None
+
+            # Combine the 2D and 3D functionse
+            def keypoint_token_update_fn_comb(*args):
+                if kp_token_update_fn is not None:
+                    args = kp_token_update_fn(
+                        kps_emb_start_idx, image_embeddings, *args
+                    )
+                if kp3d_token_update_fn is not None:
+                    args = kp3d_token_update_fn(kps3d_emb_start_idx, *args)
+                return args
+
+            pose_token, pose_output = self.decoder_hand(
+                token_embeddings,
+                image_embeddings,
+                token_augment,
+                image_augment,
+                token_mask,
+                token_to_pose_output_fn=token_to_pose_output_fn,
+                keypoint_token_update_fn=keypoint_token_update_fn_comb,
+            )
+
+        if self.cfg.MODEL.DECODER.get("DO_HAND_DETECT_TOKENS", False):
+            return (
+                pose_token[:, hand_det_emb_start_idx : hand_det_emb_start_idx + 2],
+                pose_output,
+            )
+        else:
+            return pose_token, pose_output
+
+    def get_atlas_output(self, batch, return_keypoints, return_joint_rotations=False, return_joint_params=False):
+        gt_verts, gt_j3d, gt_rots, gt_joint_params = self.head_pose.mhr_forward(
             global_trans=torch.zeros_like(
                 batch["atlas_params"]["global_orient"].squeeze(1)
             ),  # global_trans==0
@@ -737,21 +957,29 @@ class SAM3DBody(BaseModel):
             shape_params=batch["atlas_params"]["shape"].squeeze(1),
             expr_params=batch["atlas_params"]["face"].squeeze(1),
             do_pcblend=True,
-            return_keypoints=return_keypoints,
+            return_keypoints=True,
+            return_joint_rotations=True,
+            return_joint_params=True,
         )
+        gt_verts[..., [1, 2]] *= -1  # Camera system difference
+        gt_j3d[..., [1, 2]] *= -1  # Camera system difference
+
+        to_return = [gt_verts]
+
         if return_keypoints:
-            gt_verts, gt_j3d = gt_atlas_output
-            gt_verts[..., [1, 2]] *= -1  # Camera system difference
-            gt_j3d[..., [1, 2]] *= -1  # Camera system difference
-            return gt_verts, gt_j3d
+            to_return.append(gt_j3d)
+        if return_joint_rotations:
+            to_return.append(gt_rots)
+        if return_joint_params:
+            to_return.append(gt_joint_params)
+
+        if len(to_return) == 1:
+            return to_return[0]
         else:
-            gt_verts = gt_atlas_output
-            gt_verts[..., [1, 2]] *= -1  # Camera system difference
-            return gt_verts
+            return tuple(to_return)
 
     @torch.no_grad()
-    def _get_keypoint_prompt(self, batch, output, force_dummy=False):
-        pred_keypoints_2d = output["atlas"]["pred_keypoints_2d"].detach().clone()
+    def _get_keypoint_prompt(self, batch, pred_keypoints_2d, force_dummy=False):
         if self.camera_type == "perspective":
             pred_keypoints_2d = self._full_to_crop(batch, pred_keypoints_2d)
 
@@ -766,15 +994,21 @@ class SAM3DBody(BaseModel):
         return keypoint_prompt
 
     def _get_mask_prompt(self, batch, image_embeddings):
-        # image_embeddings = output["image_embeddings"]
         x_mask = self._flatten_person(batch["mask"])
         mask_embeddings, no_mask_embeddings = self.prompt_encoder.get_mask_embeddings(
             x_mask, image_embeddings.shape[0], image_embeddings.shape[2:]
         )
-        if self.cfg.MODEL.BACKBONE.TYPE in ["vit_hmr", "hmr2", "vit"]:
+        if self.cfg.MODEL.BACKBONE.TYPE in [
+            "vit_hmr",
+            "hmr2",
+            "vit",
+            "vit_hmr_decouple",
+        ]:
             # HMR2.0 backbone (ViTPose) assumes a different aspect ratio as input size
             mask_embeddings = mask_embeddings[:, :, :, 2:-2]
-        elif self.cfg.MODEL.BACKBONE.TYPE in ["vit_hmr_512_384"]:
+        elif self.cfg.MODEL.BACKBONE.TYPE in [
+            "vit_hmr_512_384",
+        ]:
             # for x2 resolution
             mask_embeddings = mask_embeddings[:, :, :, 4:-4]
 
@@ -789,55 +1023,142 @@ class SAM3DBody(BaseModel):
     def _one_prompt_iter(self, batch, output, prev_prompt, full_output):
         image_embeddings = output["image_embeddings"]
         condition_info = output["condition_info"]
-        pose_output = output["atlas"]
 
-        # Use previous estimate as initialization
-        prev_estimate = torch.cat(
-            [
-                pose_output["pred_pose_raw"].detach(),  # (B, 6)
-                pose_output["shape"].detach(),
-                pose_output["scale"].detach(),
-                pose_output["hand"].detach(),
-                pose_output["face"].detach(),
-            ],
-            dim=1,
-        ).unsqueeze(dim=1)
-        if hasattr(self, "init_camera") or self.cfg.MODEL.PERSON_HEAD.POSE_TYPE in [
-            "atlas",
-            "atlas46",
-        ]:
+        if "atlas" in output and output["atlas"] is not None:
+            pose_output = output["atlas"]  # body-only output
+            # Use previous estimate as initialization
             prev_estimate = torch.cat(
-                [prev_estimate, pose_output["pred_cam"].detach().unsqueeze(1)], dim=-1
+                [
+                    pose_output["pred_pose_raw"].detach(),  # (B, 6)
+                    pose_output["shape"].detach(),
+                    pose_output["scale"].detach(),
+                    pose_output["hand"].detach(),
+                    pose_output["face"].detach(),
+                ],
+                dim=1,
+            ).unsqueeze(dim=1)
+            if hasattr(self, "init_camera"):
+                prev_estimate = torch.cat(
+                    [prev_estimate, pose_output["pred_cam"].detach().unsqueeze(1)],
+                    dim=-1,
+                )
+            prev_shape = prev_estimate.shape[1:]
+
+            pred_keypoints_2d = output["atlas"]["pred_keypoints_2d"].detach().clone()
+            kpt_shape = pred_keypoints_2d.shape[1:]
+
+        if "atlas_hand" in output and output["atlas_hand"] is not None:
+            pose_output_hand = output["atlas_hand"]
+            # Use previous estimate as initialization
+            prev_estimate_hand = torch.cat(
+                [
+                    pose_output_hand["pred_pose_raw"].detach(),  # (B, 6)
+                    pose_output_hand["shape"].detach(),
+                    pose_output_hand["scale"].detach(),
+                    pose_output_hand["hand"].detach(),
+                    pose_output_hand["face"].detach(),
+                ],
+                dim=1,
+            ).unsqueeze(dim=1)
+            if hasattr(
+                self, "init_camera_hand"
+            ):
+                prev_estimate_hand = torch.cat(
+                    [
+                        prev_estimate_hand,
+                        pose_output_hand["pred_cam"].detach().unsqueeze(1),
+                    ],
+                    dim=-1,
+                )
+            prev_shape = prev_estimate_hand.shape[1:]
+
+            pred_keypoints_2d_hand = (
+                output["atlas_hand"]["pred_keypoints_2d"].detach().clone()
             )
+            kpt_shape = pred_keypoints_2d_hand.shape[1:]
+
+        all_prev_estimate = torch.zeros(
+            (image_embeddings.shape[0], *prev_shape), device=image_embeddings.device
+        )
+        if "atlas" in output and output["atlas"] is not None:
+            all_prev_estimate[self.body_batch_idx] = prev_estimate
+        if "atlas_hand" in output and output["atlas_hand"] is not None:
+            all_prev_estimate[self.hand_batch_idx] = prev_estimate_hand
 
         # Get keypoint prompts
-        keypoint_prompt = self._get_keypoint_prompt(batch, output)
+        all_pred_keypoints_2d = torch.zeros(
+            (image_embeddings.shape[0], *kpt_shape), device=image_embeddings.device
+        )
+        if "atlas" in output and output["atlas"] is not None:
+            all_pred_keypoints_2d[self.body_batch_idx] = pred_keypoints_2d
+        if "atlas_hand" in output and output["atlas_hand"] is not None:
+            all_pred_keypoints_2d[self.hand_batch_idx] = pred_keypoints_2d_hand
+
+        keypoint_prompt = self._get_keypoint_prompt(batch, all_pred_keypoints_2d)
         if len(prev_prompt):
             cur_keypoint_prompt = torch.cat(prev_prompt + [keypoint_prompt], dim=1)
         else:
             cur_keypoint_prompt = keypoint_prompt  # [B, 1, 3]
 
-        _, pose_output = self.forward_decoder(
-            image_embeddings,
-            init_estimate=None,  # not recurring previous estimate
-            keypoints=cur_keypoint_prompt,
-            prev_estimate=prev_estimate,
-            condition_info=condition_info,
-            batch=batch,
-            full_output=full_output,
-        )
+        pose_output, pose_output_hand = None, None
+        if len(self.body_batch_idx):
+            tokens_output, pose_output = self.forward_decoder(
+                image_embeddings[self.body_batch_idx],
+                init_estimate=None,  # not recurring previous estimate
+                keypoints=cur_keypoint_prompt[self.body_batch_idx],
+                prev_estimate=all_prev_estimate[self.body_batch_idx],
+                condition_info=condition_info[self.body_batch_idx],
+                batch=batch,
+                full_output=None,
+            )
+            pose_output = pose_output[-1]
 
-        if self.cfg.MODEL.DECODER.get("DO_INTERM_PREDS", False):
-            assert isinstance(
-                pose_output, list
-            ), "You're doing DO_INTERM_PREDS but pose_output is not a list?"  # Sanity
-            pose_output_interm, pose_output = pose_output[:-1], pose_output[-1]
-            output["atlas_interm"] = pose_output_interm
+        if len(self.hand_batch_idx) and self.cfg.MODEL.DO_HAND_PROMPT:
+            tokens_output_hand, pose_output_hand = self.forward_decoder_hand(
+                image_embeddings[self.hand_batch_idx],
+                init_estimate=None,  # not recurring previous estimate
+                keypoints=cur_keypoint_prompt[self.hand_batch_idx],
+                prev_estimate=all_prev_estimate[self.hand_batch_idx],
+                condition_info=condition_info[self.hand_batch_idx],
+                batch=batch,
+                full_output=None,
+            )
+            pose_output_hand = pose_output_hand[-1]
 
         # Update prediction output
-        output["atlas"] = pose_output
+        output.update(
+            {
+                "atlas": pose_output,  # atlas prediction output
+                "atlas_hand": pose_output_hand,  # atlas prediction output
+            }
+        )
 
         return output, keypoint_prompt
+
+    def _full_to_crop(
+        self,
+        batch: Dict,
+        pred_keypoints_2d: torch.Tensor,
+        batch_idx: torch.Tensor = None,
+    ) -> torch.Tensor:
+        """Convert full-image keypoints coordinates to crop and normalize to [-0.5. 0.5]"""
+        pred_keypoints_2d_cropped = torch.cat(
+            [pred_keypoints_2d, torch.ones_like(pred_keypoints_2d[:, :, [-1]])], dim=-1
+        )
+        if batch_idx is not None:
+            affine_trans = self._flatten_person(batch["affine_trans"])[batch_idx].to(
+                pred_keypoints_2d_cropped
+            )
+            img_size = self._flatten_person(batch["img_size"])[batch_idx].unsqueeze(1)
+        else:
+            affine_trans = self._flatten_person(batch["affine_trans"]).to(
+                pred_keypoints_2d_cropped
+            )
+            img_size = self._flatten_person(batch["img_size"]).unsqueeze(1)
+        pred_keypoints_2d_cropped = pred_keypoints_2d_cropped @ affine_trans.mT
+        pred_keypoints_2d_cropped = pred_keypoints_2d_cropped[..., :2] / img_size - 0.5
+
+        return pred_keypoints_2d_cropped
 
     def camera_project(self, pose_output: Dict, batch: Dict, full_output: Dict) -> Dict:
         """
@@ -852,21 +1173,20 @@ class SAM3DBody(BaseModel):
             head_camera = self.head_camera
             pred_cam = pose_output["pred_cam"]
         else:
-            head_camera = self.full_camera
-            pred_cam = self._flatten_person(full_output["full_output"]["pred_cam"])
+            assert False
 
         cam_out = head_camera.perspective_projection(
             pose_output["pred_keypoints_3d"],
             pred_cam,
-            self._flatten_person(batch["bbox_center"]),
-            self._flatten_person(batch["bbox_scale"])[:, 0],
-            self._flatten_person(batch["ori_img_size"]),
+            self._flatten_person(batch["bbox_center"])[self.body_batch_idx],
+            self._flatten_person(batch["bbox_scale"])[self.body_batch_idx, 0],
+            self._flatten_person(batch["ori_img_size"])[self.body_batch_idx],
             self._flatten_person(
                 batch["cam_int"]
                 .unsqueeze(1)
                 .expand(-1, batch["img"].shape[1], -1, -1)
                 .contiguous()
-            ),
+            )[self.body_batch_idx],
             use_intrin_center=self.cfg.MODEL.DECODER.get("USE_INTRIN_CENTER", False),
         )
 
@@ -874,15 +1194,72 @@ class SAM3DBody(BaseModel):
             cam_out_vertices = head_camera.perspective_projection(
                 pose_output["pred_vertices"],
                 pred_cam,
-                self._flatten_person(batch["bbox_center"]),
-                self._flatten_person(batch["bbox_scale"])[:, 0],
-                self._flatten_person(batch["ori_img_size"]),
+                self._flatten_person(batch["bbox_center"])[self.body_batch_idx],
+                self._flatten_person(batch["bbox_scale"])[self.body_batch_idx, 0],
+                self._flatten_person(batch["ori_img_size"])[self.body_batch_idx],
                 self._flatten_person(
                     batch["cam_int"]
                     .unsqueeze(1)
                     .expand(-1, batch["img"].shape[1], -1, -1)
                     .contiguous()
+                )[self.body_batch_idx],
+                use_intrin_center=self.cfg.MODEL.DECODER.get(
+                    "USE_INTRIN_CENTER", False
                 ),
+            )
+            pose_output["pred_keypoints_2d_verts"] = cam_out_vertices[
+                "pred_keypoints_2d"
+            ]
+
+        pose_output.update(cam_out)
+
+        return pose_output
+
+    def camera_project_hand(
+        self, pose_output: Dict, batch: Dict, full_output: Dict
+    ) -> Dict:
+        """
+        Project 3D keypoints to 2D using the camera parameters.
+        Args:
+            pose_output (Dict): Dictionary containing the pose output.
+            batch (Dict): Dictionary containing the batch data.
+        Returns:
+            Dict: Dictionary containing the projected 2D keypoints.
+        """
+        if hasattr(self, "head_camera_hand"):
+            head_camera = self.head_camera_hand
+            pred_cam = pose_output["pred_cam"]
+        else:
+            assert False
+
+        cam_out = head_camera.perspective_projection(
+            pose_output["pred_keypoints_3d"],
+            pred_cam,
+            self._flatten_person(batch["bbox_center"])[self.hand_batch_idx],
+            self._flatten_person(batch["bbox_scale"])[self.hand_batch_idx, 0],
+            self._flatten_person(batch["ori_img_size"])[self.hand_batch_idx],
+            self._flatten_person(
+                batch["cam_int"]
+                .unsqueeze(1)
+                .expand(-1, batch["img"].shape[1], -1, -1)
+                .contiguous()
+            )[self.hand_batch_idx],
+            use_intrin_center=self.cfg.MODEL.DECODER.get("USE_INTRIN_CENTER", False),
+        )
+
+        if pose_output.get("pred_vertices", None) is not None:
+            cam_out_vertices = head_camera.perspective_projection(
+                pose_output["pred_vertices"],
+                pred_cam,
+                self._flatten_person(batch["bbox_center"])[self.hand_batch_idx],
+                self._flatten_person(batch["bbox_scale"])[self.hand_batch_idx, 0],
+                self._flatten_person(batch["ori_img_size"])[self.hand_batch_idx],
+                self._flatten_person(
+                    batch["cam_int"]
+                    .unsqueeze(1)
+                    .expand(-1, batch["img"].shape[1], -1, -1)
+                    .contiguous()
+                )[self.hand_batch_idx],
                 use_intrin_center=self.cfg.MODEL.DECODER.get(
                     "USE_INTRIN_CENTER", False
                 ),
@@ -914,7 +1291,7 @@ class SAM3DBody(BaseModel):
         )
 
         # Subtract out center & normalize to be rays
-        if self.cfg.MODEL.RAY_CONDITION_TYPE in ["decoder_v2"]:
+        if self.cfg.MODEL.RAY_CONDITION_TYPE in ["decoder_v2", "decoder_v3"]:
             meshgrid_xy = (
                 meshgrid_xy - batch["cam_int"][:, None, None, None, [0, 1], [2, 2]]
             )
@@ -943,7 +1320,16 @@ class SAM3DBody(BaseModel):
             self._flatten_person(batch["img"]),
             crop_width=(
                 self.cfg.MODEL.BACKBONE.TYPE
-                in ["vit_hmr", "vit_b", "vit_l", "vit_hmr_512_384"]
+                in [
+                    "vit_hmr",
+                    "hmr2",
+                    "vit",
+                    "vit_b",
+                    "vit_l",
+                    "vit_hmr_512_384",
+                    "vit_hmr_decouple",
+                    "vit_hmr_decouple_512_384",
+                ]
             ),
         )
 
@@ -955,31 +1341,81 @@ class SAM3DBody(BaseModel):
             ray_cond = self._flatten_person(ray_cond)
             if self.cfg.MODEL.BACKBONE.TYPE in [
                 "vit_hmr",
+                "hmr2",
+                "vit",
                 "vit_b",
                 "vit_l",
+                "vit_hmr_decouple",
             ]:
                 ray_cond = ray_cond[:, :, :, 32:-32]
-            elif self.cfg.MODEL.BACKBONE.TYPE in ["vit_hmr_512_384"]:
+            elif self.cfg.MODEL.BACKBONE.TYPE in [
+                "vit_hmr_512_384",
+                "vit_hmr_decouple_512_384",
+            ]:
                 ray_cond = ray_cond[:, :, :, 64:-64]
 
-            if self.cfg.MODEL.RAY_CONDITION_TYPE == "backbone_v1":
-                # Basically, have a zero conv patch embedding, then put into the backbone.
-                ray_cond = self.ray_cond_emb(ray_cond)
-            elif self.cfg.MODEL.RAY_CONDITION_TYPE in ["decoder_v1", "decoder_v2"]:
-                batch["ray_cond"] = self.ray_cond_emb(ray_cond)
-                ray_cond = None
-            else:
-                raise Exception
+            if len(self.body_batch_idx):
+                batch["ray_cond"] = ray_cond[self.body_batch_idx].clone()
+            if len(self.hand_batch_idx):
+                batch["ray_cond_hand"] = ray_cond[self.hand_batch_idx].clone()
+            ray_cond = None
         else:
             ray_cond = None
 
-        image_embeddings = self.backbone(
-            x.type(self.backbone_dtype), extra_embed=ray_cond
-        )  # (B, C, H, W)
+        if "decouple" in self.cfg.MODEL.BACKBONE.TYPE:
+            body_x = (
+                x[self.body_batch_idx].type(self.backbone_dtype)
+                if len(self.body_batch_idx)
+                else None
+            )
+            hand_x = (
+                x[self.hand_batch_idx].type(self.backbone_dtype)
+                if len(self.hand_batch_idx)
+                else None
+            )
+            body_embeddings, hand_embeddings = self.backbone(
+                body_x,
+                hand_x,
+                extra_embed=None,
+            )  # (B, C, H, W)
+            if isinstance(body_embeddings, tuple):
+                body_embeddings = body_embeddings[-1]
+            if isinstance(hand_embeddings, tuple):
+                hand_embeddings = hand_embeddings[-1]
 
-        if isinstance(image_embeddings, tuple):
-            image_embeddings = image_embeddings[-1]
-        image_embeddings = image_embeddings.type(x.dtype)
+            embedding_shape = (
+                body_embeddings.shape[1:]
+                if body_embeddings is not None
+                else hand_embeddings.shape[1:]
+            )
+            dtype = (
+                body_embeddings.dtype
+                if body_embeddings is not None
+                else hand_embeddings.dtype
+            )
+            device = (
+                body_embeddings.device
+                if body_embeddings is not None
+                else hand_embeddings.device
+            )
+            image_embeddings = torch.zeros(
+                (x.shape[0], *embedding_shape),
+                dtype=dtype,
+                device=device,
+            )
+            if len(self.body_batch_idx):
+                image_embeddings[self.body_batch_idx] = body_embeddings
+            if len(self.hand_batch_idx):
+                image_embeddings[self.hand_batch_idx] = hand_embeddings
+            image_embeddings = image_embeddings.type(x.dtype)
+        else:
+            image_embeddings = self.backbone(
+                x.type(self.backbone_dtype), extra_embed=ray_cond
+            )  # (B, C, H, W)
+
+            if isinstance(image_embeddings, tuple):
+                image_embeddings = image_embeddings[-1]
+            image_embeddings = image_embeddings.type(x.dtype)
 
         # Mask condition if available
         if self.cfg.MODEL.PROMPT_ENCODER.get("MASK_EMBED_TYPE", None) is not None:
@@ -998,36 +1434,778 @@ class SAM3DBody(BaseModel):
         keypoints_prompt[:, :, -1] = -2
 
         # Forward promptable decoder to get updated pose tokens and regression output
-        _, pose_output = self.forward_decoder(
-            image_embeddings,
-            init_estimate=None,
-            keypoints=keypoints_prompt,
-            prev_estimate=None,
-            condition_info=condition_info,
-            batch=batch,
-            full_output=full_output,
-        )
+        pose_output, pose_output_hand = None, None
+        if len(self.body_batch_idx):
+            tokens_output, pose_output = self.forward_decoder(
+                image_embeddings[self.body_batch_idx],
+                init_estimate=None,
+                keypoints=keypoints_prompt[self.body_batch_idx],
+                prev_estimate=None,
+                condition_info=condition_info[self.body_batch_idx],
+                batch=batch,
+                full_output=None,
+            )
+            pose_output = pose_output[-1]
+        if len(self.hand_batch_idx):
+            tokens_output_hand, pose_output_hand = self.forward_decoder_hand(
+                image_embeddings[self.hand_batch_idx],
+                init_estimate=None,
+                keypoints=keypoints_prompt[self.hand_batch_idx],
+                prev_estimate=None,
+                condition_info=condition_info[self.hand_batch_idx],
+                batch=batch,
+                full_output=None,
+            )
+            pose_output_hand = pose_output_hand[-1]
 
-        if self.cfg.MODEL.DECODER.get("DO_INTERM_PREDS", False):
-            assert isinstance(
-                pose_output, list
-            ), "You're doing DO_INTERM_PREDS but pose_output is not a list?"  # Sanity
-            pose_output_interm, pose_output = pose_output[:-1], pose_output[-1]
-        else:
-            pose_output_interm = None
-
-        return {
+        output = {
             # "pose_token": pose_token,
             "atlas": pose_output,  # atlas prediction output
-            "atlas_interm": pose_output_interm,  # List of intermediate decoder outputs.
+            "atlas_hand": pose_output_hand,  # atlas prediction output
             "condition_info": condition_info,
             "image_embeddings": image_embeddings,
         }
 
+        if self.cfg.MODEL.DECODER.get("DO_HAND_DETECT_TOKENS", False):
+            if len(self.body_batch_idx):
+                output_hand_box_tokens = tokens_output
+                hand_coords = self.bbox_embed(
+                    output_hand_box_tokens
+                ).sigmoid()  # x1, y1, w, h for body samples, 0 ~ 1
+                hand_logits = self.hand_cls_embed(output_hand_box_tokens)
+
+                output["atlas"]["hand_box"] = hand_coords
+                output["atlas"]["hand_logits"] = hand_logits
+                if self.cfg.MODEL.DECODER.get("HAND_DETECT_DO_UNCERT", False):
+                    pred_hand_box_logsigma = self.hand_box_logsigma_embed(output_hand_box_tokens)
+                    output["atlas"]["pred_hand_box_logsigma"] = pred_hand_box_logsigma
+
+            if len(self.hand_batch_idx):
+                output_hand_box_tokens_hand_batch = tokens_output_hand
+
+                hand_coords_hand_batch = self.bbox_embed(
+                    output_hand_box_tokens_hand_batch
+                ).sigmoid()  # x1, y1, w, h for hand samples
+                hand_logits_hand_batch = self.hand_cls_embed(output_hand_box_tokens_hand_batch)
+
+                output["atlas_hand"]["hand_box"] = hand_coords_hand_batch
+                output["atlas_hand"]["hand_logits"] = hand_logits_hand_batch
+                if self.cfg.MODEL.DECODER.get("HAND_DETECT_DO_UNCERT", False):
+                    pred_hand_box_logsigma_hand_batch = self.hand_box_logsigma_embed(output_hand_box_tokens_hand_batch)
+                    output["atlas_hand"]["pred_hand_box_logsigma"] = pred_hand_box_logsigma_hand_batch
+
+        return output
+
     def forward_step(self, batch: Dict) -> Tuple[Dict, Dict]:
+        # Full-image encoder
         full_output = {}
 
         # Crop-image (pose) branch
         pose_output = self.forward_pose_branch(batch, full_output)
 
         return pose_output, full_output
+
+    def run_inference(
+        self,
+        img,
+        batch: Dict,
+        transform_hand,
+        use_hand_box=True,
+        thresh_wrist_angle=1.2,
+        hand_scale_factor=None,
+    ):
+        height, width = img.shape[:2]
+        cam_int = batch["cam_int"].clone()
+
+        ## Stage 1: Body
+        self.hand_batch_idx = []
+        self.body_batch_idx = list(range(batch["img"].shape[1]))
+        self.disable_hand = True
+        self.disable_body = False
+        pose_output, _ = self.forward_step(batch)
+        batch = self._get_hand_box(pose_output, batch, scale_factor=hand_scale_factor)
+        ori_local_wrist_rotmat = roma.euler_to_rotmat(
+            "XZY",
+            pose_output['atlas']['body_pose'][:, [41, 43, 42, 31, 33, 32]].unflatten(1, (2, 3))
+        )
+
+        if use_hand_box:
+            # Assuming square crop into backbone
+            pred_left_hand_box = pose_output["atlas"]["hand_box"][:, 0].detach().cpu().numpy() * self.cfg.MODEL.IMAGE_SIZE[0]
+            pred_right_hand_box = pose_output["atlas"]["hand_box"][:, 1].detach().cpu().numpy() * self.cfg.MODEL.IMAGE_SIZE[0]
+            pred_left_hand_logits = pose_output["atlas"]["hand_logits"][:, 0].detach().cpu().numpy()
+            pred_right_hand_logits = pose_output["atlas"]["hand_logits"][:, 1].detach().cpu().numpy()
+            
+            # Change boxes into squares
+            batch['left_center'] = pred_left_hand_box[:, :2]
+            batch['left_scale'] = pred_left_hand_box[:, 2:].max(axis=1, keepdims=True).repeat(2, axis=1)
+            batch['right_center'] = pred_right_hand_box[:, :2]
+            batch['right_scale'] = pred_right_hand_box[:, 2:].max(axis=1, keepdims=True).repeat(2, axis=1)
+            
+            # Crop to full. batch["affine_trans"] is full-to-crop, right application
+            batch['left_scale'] = batch['left_scale'] / batch["affine_trans"][0, :, 0, 0].cpu().numpy()[:, None]
+            batch['right_scale'] = batch['right_scale'] / batch["affine_trans"][0, :, 0, 0].cpu().numpy()[:, None]
+            batch['left_center'] = (batch['left_center'] - batch["affine_trans"][0, :, [0, 1], [2, 2]].cpu().numpy()) / batch["affine_trans"][0, :, 0, 0].cpu().numpy()[:, None]
+            batch['right_center'] = (batch['right_center'] - batch["affine_trans"][0, :, [0, 1], [2, 2]].cpu().numpy()) / batch["affine_trans"][0, :, 0, 0].cpu().numpy()[:, None]
+
+        # Stage 3: Re-run with each hand
+        self.hand_batch_idx = list(range(batch["img"].shape[1]))
+        self.body_batch_idx = []
+        self.disable_hand = False
+        self.disable_body = True
+        ## Left...
+        left_xyxy = np.concatenate([
+            (batch['left_center'][:, 0] - batch['left_scale'][:, 0] * 1 / 2).reshape(-1, 1),
+            (batch['left_center'][:, 1] - batch['left_scale'][:, 1] * 1 / 2).reshape(-1, 1),
+            (batch['left_center'][:, 0] + batch['left_scale'][:, 0] * 1 / 2).reshape(-1, 1),
+            (batch['left_center'][:, 1] + batch['left_scale'][:, 1] * 1 / 2).reshape(-1, 1),
+        ], axis=1)
+        
+        # Flip image & box
+        flipped_img = img[:, ::-1]
+        tmp = left_xyxy.copy()
+        left_xyxy[:, 0] = width - tmp[:, 2] - 1
+        left_xyxy[:, 2] = width - tmp[:, 0] - 1
+
+        batch_lhand = prepare_batch(flipped_img, transform_hand, left_xyxy, cam_int=cam_int.clone())
+        batch_lhand = recursive_to(batch_lhand, "cuda")
+        lhand_output = self.forward_step(batch_lhand)[0]
+        lhand_output['atlas'] = lhand_output['atlas_hand']
+        
+        # Unflip output
+        ## Flip scale
+        ### Get MHR values
+        # TODO: put this into utils function and load it here.
+        scale_r_hands_mean = -0.1798856556415558
+        scale_l_hands_mean = -0.18402963876724243
+        scale_r_hands_std = 0.04739458113908768
+        scale_l_hands_std = 0.04183576628565788
+        ### Apply
+        lhand_output['atlas']['scale'][:, 9] = ((scale_r_hands_mean + scale_r_hands_std * lhand_output['atlas']['scale'][:, 8]) - scale_l_hands_mean) / scale_l_hands_std
+        ## Get the right hand global rotation, flip it, put it in as left.
+        lhand_output['atlas']['joint_global_rots'][:, 78] = lhand_output['atlas']['joint_global_rots'][:, 42].clone()
+        lhand_output['atlas']['joint_global_rots'][:, 78, [1, 2], :] *= -1
+        ### Flip hand pose
+        lhand_output['atlas']['hand'][:, :54] = lhand_output['atlas']['hand'][:, 54:]
+        ### Unflip box
+        batch_lhand['bbox_center'][:, :, 0] = width - batch_lhand['bbox_center'][:, :, 0] - 1
+    
+        ## Right...
+        right_xyxy = np.concatenate([
+            (batch['right_center'][:, 0] - batch['right_scale'][:, 0] * 1 / 2).reshape(-1, 1),
+            (batch['right_center'][:, 1] - batch['right_scale'][:, 1] * 1 / 2).reshape(-1, 1),
+            (batch['right_center'][:, 0] + batch['right_scale'][:, 0] * 1 / 2).reshape(-1, 1),
+            (batch['right_center'][:, 1] + batch['right_scale'][:, 1] * 1 / 2).reshape(-1, 1),
+        ], axis=1)
+
+        batch_rhand = prepare_batch(img, transform_hand, right_xyxy, cam_int=cam_int.clone())
+        batch_rhand = recursive_to(batch_rhand, "cuda")
+        rhand_output = self.forward_step(batch_rhand)[0]
+        rhand_output['atlas'] = rhand_output['atlas_hand']
+        
+        # Wrist+elbow prompt for merging
+        self.hand_batch_idx = []
+        self.body_batch_idx = list(range(batch["img"].shape[1]))
+        self.disable_hand = True
+        self.disable_body = False
+        
+        # Get right & left keypoints from crops; full image. Each are B x 1 x 2
+        # TODO: replace all hard-code numbers
+        kps_right_wrist_idx = 41
+        kps_left_wrist_idx = 62
+        right_kps_full = rhand_output['atlas']['pred_keypoints_2d'][:, [kps_right_wrist_idx]].clone()
+        left_kps_full = lhand_output['atlas']['pred_keypoints_2d'][:, [kps_right_wrist_idx]].clone()
+        left_kps_full[:, :, 0] = width - left_kps_full[:, :, 0] - 1 # Flip left hand
+        
+        # Next, get them to crop-normalized space.
+        right_kps_crop = self._full_to_crop(batch, right_kps_full)
+        left_kps_crop = self._full_to_crop(batch, left_kps_full)
+
+        # Get right & left keypoints from crops; full image. Each are B x 1 x 2
+        kps_right_elbow_idx = 8
+        kps_left_elbow_idx = 7
+        right_kps_elbow_full = pose_output['atlas']['pred_keypoints_2d'][:, [kps_right_elbow_idx]].clone()
+        left_kps_elbow_full = pose_output['atlas']['pred_keypoints_2d'][:, [kps_left_elbow_idx]].clone()
+        
+        # Next, get them to crop-normalized space.
+        right_kps_elbow_crop = self._full_to_crop(batch, right_kps_elbow_full)
+        left_kps_elbow_crop = self._full_to_crop(batch, left_kps_elbow_full)
+
+        ############## Do keypoint prompts to merge body and hand ###########
+
+        # Assemble them into keypoint prompts
+        keypoint_prompt = torch.cat(
+            [right_kps_crop, left_kps_crop, right_kps_elbow_crop, left_kps_elbow_crop], dim=1
+        )
+        keypoint_prompt = torch.cat([keypoint_prompt, keypoint_prompt[..., [-1]]], dim=-1)
+        keypoint_prompt[:, 0, -1] = kps_right_wrist_idx
+        keypoint_prompt[:, 1, -1] = kps_left_wrist_idx
+        keypoint_prompt[:, 2, -1] = kps_right_elbow_idx
+        keypoint_prompt[:, 3, -1] = kps_left_elbow_idx
+        
+        if keypoint_prompt.shape[0] > 1:
+            # Replace invalid keypoints to dummy prompts
+            invalid_prompt = (
+                (keypoint_prompt[..., 0] < -0.5) |
+                (keypoint_prompt[..., 0] > 0.5) |
+                (keypoint_prompt[..., 1] < -0.5) |
+                (keypoint_prompt[..., 1] > 0.5)
+            ).unsqueeze(-1)
+            dummy_prompt = torch.zeros((1, 1, 3)).to(keypoint_prompt)
+            dummy_prompt[:, :, -1] = -2
+            keypoint_prompt[:, :, :2] = torch.clamp(
+                keypoint_prompt[:, :, :2] + 0.5, min=0.0, max=1.0
+            )  # [-0.5, 0.5] --> [0, 1]
+            keypoint_prompt = torch.where(invalid_prompt, dummy_prompt, keypoint_prompt)
+        else:
+            # Only keep valid keypoints
+            valid_keypoint = torch.all(
+                (keypoint_prompt[:, :, :2] > -0.5) & (keypoint_prompt[:, :, :2] < 0.5),
+                dim=2
+            ).squeeze()
+            keypoint_prompt = keypoint_prompt[:, valid_keypoint]
+            keypoint_prompt[:, :, :2] = torch.clamp(
+                keypoint_prompt[:, :, :2] + 0.5, min=0.0, max=1.0
+            )  # [-0.5, 0.5] --> [0, 1]
+        
+        if len(keypoint_prompt):
+            pose_output, _ = self.run_keypoint_prompt(batch, pose_output, keypoint_prompt)
+        
+        ##############################################################################
+
+        # Drop in hand pose
+        left_hand_pose_params = lhand_output['atlas']['hand'][:, :54]
+        right_hand_pose_params = rhand_output['atlas']['hand'][:, 54:]
+        updated_hand_pose = torch.cat([left_hand_pose_params, right_hand_pose_params], dim=1)
+            
+        # Drop in hand scales
+        updated_scale = pose_output['atlas']['scale'].clone()
+        updated_scale[:, 9] = lhand_output['atlas']['scale'][:, 9]
+        updated_scale[:, 8] = rhand_output['atlas']['scale'][:, 8]
+        updated_scale[:, 18:] = (lhand_output['atlas']['scale'][:, 18:] + rhand_output['atlas']['scale'][:, 18:]) / 2
+        
+        # Update hand shape
+        updated_shape = pose_output['atlas']['shape'].clone()
+        updated_shape[:, 40:] = (lhand_output['atlas']['shape'][:, 40:] + rhand_output['atlas']['shape'][:, 40:]) / 2
+            
+        ############################ Doing IK ############################
+
+        # First, forward just FK
+        joint_rotations = self.head_pose.mhr_forward(
+            global_trans=pose_output['atlas']['global_rot'] * 0,
+            global_rot=pose_output['atlas']['global_rot'],
+            body_pose_params=pose_output['atlas']['body_pose'],
+            hand_pose_params=updated_hand_pose,
+            scale_params=updated_scale,
+            shape_params=updated_shape,
+            expr_params=pose_output['atlas']['face'],
+            return_joint_rotations=True,
+        )[1]
+
+        # Get lowarm
+        lowarm_joint_idxs = torch.LongTensor([76, 40]).cuda() # left, right
+        lowarm_joint_rotations = joint_rotations[:, lowarm_joint_idxs] # B x 2 x 3 x 3
+        
+        # Get zero-wrist pose
+        wrist_twist_joint_idxs = torch.LongTensor([77, 41]).cuda() # left, right
+        wrist_zero_rot_pose = lowarm_joint_rotations @ self.head_pose.joint_rotation[wrist_twist_joint_idxs]
+        
+        # Get globals from left & right
+        left_joint_global_rots = lhand_output['atlas']['joint_global_rots']
+        right_joint_global_rots = rhand_output['atlas']['joint_global_rots']
+        pred_global_wrist_rotmat = torch.stack([
+            left_joint_global_rots[:, 78],
+            right_joint_global_rots[:, 42],
+        ], dim=1)
+
+        # Now we want to get the local poses that lead to the wrist being pred_global_wrist_rotmat
+        fused_local_wrist_rotmat = torch.einsum('kabc,kabd->kadc', pred_global_wrist_rotmat, wrist_zero_rot_pose)
+        wrist_xzy = roma.rotmat_to_euler("XZY", fused_local_wrist_rotmat)
+        
+        # Put it in.
+        angle_difference = rotation_angle_difference(ori_local_wrist_rotmat, fused_local_wrist_rotmat) # B x 2 x 3 x3
+        valid_angle = angle_difference < thresh_wrist_angle
+        valid_angle = valid_angle.unsqueeze(-1)
+
+        body_pose = pose_output['atlas']['body_pose'][:, [41, 43, 42, 31, 33, 32]].unflatten(1, (2, 3))
+        updated_body_pose = torch.where(valid_angle, wrist_xzy, body_pose)
+        pose_output['atlas']['body_pose'][:, [41, 43, 42, 31, 33, 32]] = updated_body_pose.flatten(1, 2)
+
+        hand_pose = pose_output['atlas']['hand'].unflatten(1, (2, 54))
+        pose_output['atlas']['hand'] = torch.where(valid_angle, updated_hand_pose.unflatten(1, (2, 54)), hand_pose).flatten(1, 2)
+
+        hand_scale = torch.stack([pose_output['atlas']['scale'][:, 9], pose_output['atlas']['scale'][:, 8]], dim=1)
+        updated_hand_scale = torch.stack([updated_scale[:, 9], updated_scale[:, 8]], dim=1)
+        masked_hand_scale = torch.where(valid_angle.squeeze(-1), updated_hand_scale, hand_scale)
+        pose_output['atlas']['scale'][:, 9] = masked_hand_scale[:, 0]
+        pose_output['atlas']['scale'][:, 8] = masked_hand_scale[:, 1]
+        
+        # Replace shared shape and scale
+        pose_output['atlas']['scale'][:, 18:] = torch.where(valid_angle.squeeze(-1).sum(dim=1, keepdim=True) > 0, (
+            lhand_output['atlas']['scale'][:, 18:] * valid_angle.squeeze(-1)[:, [0]] + rhand_output['atlas']['scale'][:, 18:] * valid_angle.squeeze(-1)[:, [1]]
+        ) / (valid_angle.squeeze(-1).sum(dim=1, keepdim=True) + 1e-8), pose_output['atlas']['scale'][:, 18:])
+        pose_output['atlas']['shape'][:, 40:] = torch.where(valid_angle.squeeze(-1).sum(dim=1, keepdim=True) > 0, (
+            lhand_output['atlas']['shape'][:, 40:] * valid_angle.squeeze(-1)[:, [0]] + rhand_output['atlas']['shape'][:, 40:] * valid_angle.squeeze(-1)[:, [1]]
+        ) / (valid_angle.squeeze(-1).sum(dim=1, keepdim=True) + 1e-8), pose_output['atlas']['shape'][:, 40:])
+        
+        ########################################################
+            
+        # Re-run forward
+        with torch.no_grad():
+            verts, j3d, jcoords, joint_global_rots, joint_params = self.head_pose.mhr_forward(
+                global_trans=pose_output['atlas']['global_rot'] * 0,
+                global_rot=pose_output['atlas']['global_rot'],
+                body_pose_params=pose_output['atlas']['body_pose'],
+                hand_pose_params=pose_output['atlas']['hand'],
+                scale_params=pose_output['atlas']['scale'],
+                shape_params=pose_output['atlas']['shape'],
+                expr_params=pose_output['atlas']['face'],
+                return_keypoints=True,
+                return_joint_coords=True,
+                return_joint_rotations=True,
+                return_joint_params=True,
+            )
+            j3d = j3d[:, :70]  # 308 --> 70 keypoints
+            verts[..., [1, 2]] *= -1  # Camera system difference
+            j3d[..., [1, 2]] *= -1  # Camera system difference
+            jcoords[..., [1, 2]] *= -1
+            pose_output['atlas']['pred_keypoints_3d'] = j3d
+            pose_output['atlas']['pred_vertices'] = verts
+            pose_output['atlas']['pred_joint_coords'] = jcoords
+            pose_output['atlas']['pred_pose_raw'][...] = 0  # pred_pose_raw is not valid anymore
+        
+        return pose_output, batch_lhand, batch_rhand, lhand_output, rhand_output
+    
+    def run_keypoint_prompt(self, batch, output, keypoint_prompt):
+        image_embeddings = output["image_embeddings"]
+        condition_info = output["condition_info"]
+        pose_output = output["atlas"]  # body-only output
+        # Use previous estimate as initialization
+        prev_estimate = torch.cat(
+            [
+                pose_output["pred_pose_raw"].detach(),  # (B, 6)
+                pose_output["shape"].detach(),
+                pose_output["scale"].detach(),
+                pose_output["hand"].detach(),
+                pose_output["face"].detach(),
+            ],
+            dim=1,
+        ).unsqueeze(dim=1)
+        if hasattr(self, "init_camera"):
+            prev_estimate = torch.cat(
+                [prev_estimate, pose_output["pred_cam"].detach().unsqueeze(1)],
+                dim=-1,
+            )
+        
+        tokens_output, pose_output = self.forward_decoder(
+            image_embeddings,
+            init_estimate=None,  # not recurring previous estimate
+            keypoints=keypoint_prompt,
+            prev_estimate=prev_estimate,
+            condition_info=condition_info,
+            batch=batch,
+            full_output=None,
+        )
+        pose_output = pose_output[-1]
+
+        output.update({"atlas": pose_output})
+        return output, keypoint_prompt
+
+    def _get_hand_box(self, pose_output, batch, scale_factor=None):
+        # get the left and right hand boxes and images from the predictions
+        left_hand_joint_idx = torch.arange(42, 63)  # 21 joints
+        right_hand_joint_idx = torch.arange(21, 42)  # 21 joints
+        left_wrist_idx = 62
+        right_wrist_idx = 41
+
+        # Get hand crops
+        ## First, decode images
+        batch_size, num_person = batch["img"].shape[:2]
+        full_imgs = [
+            img.data for img in batch["img_ori"] for _ in range(num_person)
+        ]  # cv2.imdecode(np.frombuffer(img, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
+        full_imgs_hw = torch.LongTensor(
+            [img.shape[:2] for img in full_imgs]
+        ).numpy()
+
+        if scale_factor is None:
+            scale_factor = 1.6
+        
+        ## Get hand 2d KPS
+        left_hand_kps_2d = pose_output["atlas"]["pred_keypoints_2d"][
+            :, left_hand_joint_idx
+        ]
+        right_hand_kps_2d = pose_output["atlas"]["pred_keypoints_2d"][
+            :, right_hand_joint_idx
+        ]
+
+        ## Get minmaxes (xy)
+        left_min = left_hand_kps_2d.amin(dim=1).cpu().long().numpy()
+        left_max = left_hand_kps_2d.amax(dim=1).cpu().long().numpy()
+        right_min = right_hand_kps_2d.amin(dim=1).cpu().long().numpy()
+        right_max = right_hand_kps_2d.amax(dim=1).cpu().long().numpy()
+        left_min[:, 0] = np.clip(left_min[:, 0], a_min=0, a_max=full_imgs_hw[:, 1])
+        left_min[:, 1] = np.clip(left_min[:, 1], a_min=0, a_max=full_imgs_hw[:, 0])
+        left_max[:, 0] = np.clip(left_max[:, 0], a_min=0, a_max=full_imgs_hw[:, 1])
+        left_max[:, 1] = np.clip(left_max[:, 1], a_min=0, a_max=full_imgs_hw[:, 0])
+        right_min[:, 0] = np.clip(
+            right_min[:, 0], a_min=0, a_max=full_imgs_hw[:, 1]
+        )
+        right_min[:, 1] = np.clip(
+            right_min[:, 1], a_min=0, a_max=full_imgs_hw[:, 0]
+        )
+        right_max[:, 0] = np.clip(
+            right_max[:, 0], a_min=0, a_max=full_imgs_hw[:, 1]
+        )
+        right_max[:, 1] = np.clip(
+            right_max[:, 1], a_min=0, a_max=full_imgs_hw[:, 0]
+        )
+        ## Get center & scale
+        left_center = (left_max + left_min) / 2
+        right_center = (right_max + right_min) / 2
+        left_scale = (left_max - left_min) * scale_factor
+        right_scale = (right_max - right_min) * scale_factor
+        # Assumin square box is used
+        left_scale[...] = left_scale.max(axis=1)[:, None]
+        right_scale[...] = right_scale.max(axis=1)[:, None]
+        ## Stack
+
+        batch['left_scale'] = left_scale
+        batch['left_center'] = left_center
+        batch['right_scale'] = right_scale
+        batch['right_center'] = right_center
+        
+        return batch
+
+    def keypoint_token_update_fn(
+        self,
+        kps_emb_start_idx,
+        image_embeddings,
+        token_embeddings,
+        token_augment,
+        pose_output,
+        layer_idx,
+    ):
+        # It's already after the last layer, we're done.
+        if layer_idx == len(self.decoder.layers) - 1:
+            return token_embeddings, token_augment, pose_output, layer_idx
+
+        # Clone
+        token_embeddings = token_embeddings.clone()
+        token_augment = token_augment.clone()
+
+        num_keypoints = self.keypoint_embedding.weight.shape[0]
+
+        # Get current 2D KPS predictions # TODO (jinhyun1): Get 3D kps too, put into the model. 2D helps 2D, doesn't help 3D
+        pred_keypoints_2d_cropped = pose_output[
+            "pred_keypoints_2d_cropped"
+        ].clone()  # These are -0.5 ~ 0.5 (CHECK!!!!!!!)
+        pred_keypoints_2d_depth = pose_output["pred_keypoints_2d_depth"].clone()
+
+        # Optionally detach them (backpropping through random sincos.. hmm)
+        if self.cfg.MODEL.DECODER.get("KEYPOINT_TOKEN_UPDATE_DETACH_KPS", True):
+            pred_keypoints_2d_cropped = pred_keypoints_2d_cropped.detach()
+            pred_keypoints_2d_depth = pred_keypoints_2d_depth.detach()
+
+        # have this for atlas
+        pred_keypoints_2d_cropped = pred_keypoints_2d_cropped[
+            :, self.keypoint_embedding_idxs
+        ]
+        pred_keypoints_2d_depth = pred_keypoints_2d_depth[
+            :, self.keypoint_embedding_idxs
+        ]
+
+        # Get 2D KPS to be 0 ~ 1
+        pred_keypoints_2d_cropped_01 = pred_keypoints_2d_cropped + 0.5
+
+        # Get a mask of those that are 1) beyond image boundaries or 2) behind the camera
+        invalid_mask = (
+            (pred_keypoints_2d_cropped_01[:, :, 0] < 0)
+            | (pred_keypoints_2d_cropped_01[:, :, 0] > 1)
+            | (pred_keypoints_2d_cropped_01[:, :, 1] < 0)
+            | (pred_keypoints_2d_cropped_01[:, :, 1] > 1)
+            | (pred_keypoints_2d_depth[:, :] < 1e-5)
+        )
+
+        # Run them through the prompt encoder's pos emb function
+        if not self.cfg.MODEL.DECODER.get(
+            "KEYPOINT_TOKEN_UPDATE_COORD_EMB_USE_MLP", False
+        ):
+            pred_keypoints_2d_cropped_emb = self.prompt_encoder.pe_layer._pe_encoding(
+                pred_keypoints_2d_cropped_01
+            )
+            # Zero invalid pos embs out
+            pred_keypoints_2d_cropped_emb = pred_keypoints_2d_cropped_emb * (
+                ~invalid_mask[:, :, None]
+            )
+            # Put them in
+            token_augment[
+                :, kps_emb_start_idx : kps_emb_start_idx + num_keypoints, :
+            ] = self.keypoint_posemb_linear(pred_keypoints_2d_cropped_emb)
+        else:
+            # TODO (jinhyun1): NOTE: Here, note that the OUTPUT is multiplied by 0. upstairs, the INPUT is.
+            token_augment[
+                :, kps_emb_start_idx : kps_emb_start_idx + num_keypoints, :
+            ] = self.keypoint_posemb_linear(pred_keypoints_2d_cropped) * (
+                ~invalid_mask[:, :, None]
+            )
+
+        # Also maybe update token_embeddings with the grid sampled 2D feature.
+        # Remember that pred_keypoints_2d_cropped are -0.5 ~ 0.5. We want -1 ~ 1
+        if self.cfg.MODEL.DECODER.KEYPOINT_TOKEN_UPDATE in ["v2", "v3"]:
+            # Sample points...
+            ## Get sampling points
+            pred_keypoints_2d_cropped_sample_points = pred_keypoints_2d_cropped * 2
+            if self.cfg.MODEL.BACKBONE.TYPE in [
+                "vit_hmr",
+                "hmr2",
+                "vit",
+                "vit_b",
+                "vit_l",
+                "vit_hmr_512_384",
+                "vit_hmr_decouple",
+                "vit_hmr_decouple_512_384",
+            ]:
+                # Need to go from 256 x 256 coords to 256 x 192 (HW) because image_embeddings is 16x12
+                # Aka, for x, what was normally -1 ~ 1 for 256 should be -16/12 ~ 16/12 (since to sample at original 256, need to overflow)
+                pred_keypoints_2d_cropped_sample_points[:, :, 0] = (
+                    pred_keypoints_2d_cropped_sample_points[:, :, 0] / 12 * 16
+                )
+
+            if self.cfg.MODEL.DECODER.KEYPOINT_TOKEN_UPDATE in ["v2"]:
+                # Version 2 is projecting & bilinear sampling
+                pred_keypoints_2d_cropped_feats = (
+                    F.grid_sample(
+                        image_embeddings,
+                        pred_keypoints_2d_cropped_sample_points[
+                            :, :, None, :
+                        ],  # -1 ~ 1, xy
+                        mode="bilinear",
+                        padding_mode="zeros",
+                        align_corners=False,
+                    )
+                    .squeeze(3)
+                    .permute(0, 2, 1)
+                )  # B x kps x C
+                # Zero out invalid locations...
+                pred_keypoints_2d_cropped_feats = (
+                    pred_keypoints_2d_cropped_feats * (~invalid_mask[:, :, None])
+                )
+                # This is ADDING
+                token_embeddings = token_embeddings.clone()
+                token_embeddings[
+                    :,
+                    kps_emb_start_idx : kps_emb_start_idx + num_keypoints,
+                    :,
+                ] += self.keypoint_feat_linear(pred_keypoints_2d_cropped_feats)
+
+        return token_embeddings, token_augment, pose_output, layer_idx
+
+    def keypoint3d_token_update_fn(
+        self,
+        kps3d_emb_start_idx,
+        token_embeddings,
+        token_augment,
+        pose_output,
+        layer_idx,
+    ):
+        # It's already after the last layer, we're done.
+        if layer_idx == len(self.decoder.layers) - 1:
+            return token_embeddings, token_augment, pose_output, layer_idx
+
+        num_keypoints3d = self.keypoint3d_embedding.weight.shape[0]
+
+        # Get current 3D kps predictions
+        pred_keypoints_3d = pose_output["pred_keypoints_3d"].clone()
+
+        # This is a hack, as during inference, smpl joints are used, so the 70 atlas kps gets tossed.
+        # As such, I've stacked smpl joints & 70 atlas kps joints in atlas head, so just for this part, we can keep the 70.
+        
+        # Now, pelvis normalize TODO: (jinhyun1) detach pelvis?
+        pred_keypoints_3d = (
+            pred_keypoints_3d
+            - (
+                pred_keypoints_3d[:, [self.pelvis_idx[0]], :]
+                + pred_keypoints_3d[:, [self.pelvis_idx[1]], :]
+            )
+            / 2
+        )
+
+        # Get the kps we care about, _after_ pelvis norm (just in case idxs shift)
+        pred_keypoints_3d = pred_keypoints_3d[:, self.keypoint3d_embedding_idxs]
+
+        # Run through embedding MLP & put in
+        token_augment = token_augment.clone()
+        token_augment[
+            :,
+            kps3d_emb_start_idx : kps3d_emb_start_idx + num_keypoints3d,
+            :,
+        ] = self.keypoint3d_posemb_linear(pred_keypoints_3d)
+
+        # TODO: (jinhyun1) these 3D KPS tokens should have auxiliary 3D kps pred, just like 2D? Like where they want to belong
+        return token_embeddings, token_augment, pose_output, layer_idx
+
+    def keypoint_token_update_fn_hand(
+        self,
+        kps_emb_start_idx,
+        image_embeddings,
+        token_embeddings,
+        token_augment,
+        pose_output,
+        layer_idx,
+    ):
+        # It's already after the last layer, we're done.
+        if layer_idx == len(self.decoder_hand.layers) - 1:
+            return token_embeddings, token_augment, pose_output, layer_idx
+
+        # Clone
+        token_embeddings = token_embeddings.clone()
+        token_augment = token_augment.clone()
+
+        num_keypoints = self.keypoint_embedding_hand.weight.shape[0]
+
+        # Get current 2D KPS predictions # TODO (jinhyun1): Get 3D kps too, put into the model. 2D helps 2D, doesn't help 3D
+        pred_keypoints_2d_cropped = pose_output[
+            "pred_keypoints_2d_cropped"
+        ].clone()  # These are -0.5 ~ 0.5 (CHECK!!!!!!!)
+        pred_keypoints_2d_depth = pose_output["pred_keypoints_2d_depth"].clone()
+
+        # Optionally detach them (backpropping through random sincos.. hmm)
+        if self.cfg.MODEL.DECODER.get("KEYPOINT_TOKEN_UPDATE_DETACH_KPS", True):
+            pred_keypoints_2d_cropped = pred_keypoints_2d_cropped.detach()
+            pred_keypoints_2d_depth = pred_keypoints_2d_depth.detach()
+
+        # have this for atlas or smpl
+        pred_keypoints_2d_cropped = pred_keypoints_2d_cropped[
+            :, self.keypoint_embedding_idxs_hand
+        ]
+        pred_keypoints_2d_depth = pred_keypoints_2d_depth[
+            :, self.keypoint_embedding_idxs_hand
+        ]
+
+        # Get 2D KPS to be 0 ~ 1
+        pred_keypoints_2d_cropped_01 = pred_keypoints_2d_cropped + 0.5
+
+        # Get a mask of those that are 1) beyond image boundaries or 2) behind the camera
+        invalid_mask = (
+            (pred_keypoints_2d_cropped_01[:, :, 0] < 0)
+            | (pred_keypoints_2d_cropped_01[:, :, 0] > 1)
+            | (pred_keypoints_2d_cropped_01[:, :, 1] < 0)
+            | (pred_keypoints_2d_cropped_01[:, :, 1] > 1)
+            | (pred_keypoints_2d_depth[:, :] < 1e-5)
+        )
+
+        # Run them through the prompt encoder's pos emb function
+        if not self.cfg.MODEL.DECODER.get(
+            "KEYPOINT_TOKEN_UPDATE_COORD_EMB_USE_MLP", False
+        ):
+            pred_keypoints_2d_cropped_emb = self.prompt_encoder.pe_layer._pe_encoding(
+                pred_keypoints_2d_cropped_01
+            )
+            # Zero invalid pos embs out
+            pred_keypoints_2d_cropped_emb = pred_keypoints_2d_cropped_emb * (
+                ~invalid_mask[:, :, None]
+            )
+            # Put them in
+            token_augment[
+                :, kps_emb_start_idx : kps_emb_start_idx + num_keypoints, :
+            ] = self.keypoint_posemb_linear_hand(pred_keypoints_2d_cropped_emb)
+        else:
+            # TODO (jinhyun1): NOTE: Here, note that the OUTPUT is multiplied by 0. upstairs, the INPUT is.
+            token_augment[
+                :, kps_emb_start_idx : kps_emb_start_idx + num_keypoints, :
+            ] = self.keypoint_posemb_linear_hand(pred_keypoints_2d_cropped) * (
+                ~invalid_mask[:, :, None]
+            )
+
+        # Also maybe update token_embeddings with the grid sampled 2D feature.
+        # Remember that pred_keypoints_2d_cropped are -0.5 ~ 0.5. We want -1 ~ 1
+        if self.cfg.MODEL.DECODER.KEYPOINT_TOKEN_UPDATE in ["v2", "v3"]:
+            # Sample points...
+            ## Get sampling points
+            pred_keypoints_2d_cropped_sample_points = pred_keypoints_2d_cropped * 2
+            if self.cfg.MODEL.BACKBONE.TYPE in [
+                "vit_hmr",
+                "hmr2",
+                "vit",
+                "vit_b",
+                "vit_l",
+                "vit_hmr_512_384",
+                "vit_hmr_decouple",
+                "vit_hmr_decouple_512_384",
+            ]:
+                # Need to go from 256 x 256 coords to 256 x 192 (HW) because image_embeddings is 16x12
+                # Aka, for x, what was normally -1 ~ 1 for 256 should be -16/12 ~ 16/12 (since to sample at original 256, need to overflow)
+                pred_keypoints_2d_cropped_sample_points[:, :, 0] = (
+                    pred_keypoints_2d_cropped_sample_points[:, :, 0] / 12 * 16
+                )
+
+            if self.cfg.MODEL.DECODER.KEYPOINT_TOKEN_UPDATE in ["v2"]:
+                # Version 2 is projecting & bilinear sampling
+                pred_keypoints_2d_cropped_feats = (
+                    F.grid_sample(
+                        image_embeddings,
+                        pred_keypoints_2d_cropped_sample_points[
+                            :, :, None, :
+                        ],  # -1 ~ 1, xy
+                        mode="bilinear",
+                        padding_mode="zeros",
+                        align_corners=False,
+                    )
+                    .squeeze(3)
+                    .permute(0, 2, 1)
+                )  # B x kps x C
+                # Zero out invalid locations...
+                pred_keypoints_2d_cropped_feats = (
+                    pred_keypoints_2d_cropped_feats * (~invalid_mask[:, :, None])
+                )
+                # This is ADDING
+                token_embeddings = token_embeddings.clone()
+                token_embeddings[
+                    :,
+                    kps_emb_start_idx : kps_emb_start_idx + num_keypoints,
+                    :,
+                ] += self.keypoint_feat_linear_hand(pred_keypoints_2d_cropped_feats)
+
+        return token_embeddings, token_augment, pose_output, layer_idx
+
+    def keypoint3d_token_update_fn_hand(
+        self,
+        kps3d_emb_start_idx,
+        token_embeddings,
+        token_augment,
+        pose_output,
+        layer_idx,
+    ):
+        # It's already after the last layer, we're done.
+        if layer_idx == len(self.decoder_hand.layers) - 1:
+            return token_embeddings, token_augment, pose_output, layer_idx
+
+        num_keypoints3d = self.keypoint3d_embedding_hand.weight.shape[0]
+
+        # Get current 3D kps predictions
+        pred_keypoints_3d = pose_output["pred_keypoints_3d"].clone()
+
+        # Now, pelvis normalize TODO: (jinhyun1) detach pelvis?
+        pred_keypoints_3d = (
+            pred_keypoints_3d
+            - (
+                pred_keypoints_3d[:, [self.pelvis_idx[0]], :]
+                + pred_keypoints_3d[:, [self.pelvis_idx[1]], :]
+            )
+            / 2
+        )
+
+        # Get the kps we care about, _after_ pelvis norm (just in case idxs shift)
+        pred_keypoints_3d = pred_keypoints_3d[:, self.keypoint3d_embedding_idxs_hand]
+
+        # Run through embedding MLP & put in
+        token_augment = token_augment.clone()
+        token_augment[
+            :,
+            kps3d_emb_start_idx : kps3d_emb_start_idx + num_keypoints3d,
+            :,
+        ] = self.keypoint3d_posemb_linear_hand(pred_keypoints_3d)
+
+        # TODO: (jinhyun1) these 3D KPS tokens should have auxiliary 3D kps pred, just like 2D? Like where they want to belong
+        return token_embeddings, token_augment, pose_output, layer_idx
