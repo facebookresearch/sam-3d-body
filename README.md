@@ -1,4 +1,4 @@
-# SAM 3D Body: Single Image Human Mesh Recovery 
+# SAM 3D Body: Robust Full-Body Human Mesh Recovery 
 
 **[AI at Meta, FAIR](https://ai.meta.com/research/)**
 
@@ -10,11 +10,11 @@
 
 ![SAM 3D Body Model Architecture](assets/model_diagram.png?raw=true)
 
-**SAM 3D Body (3DB)** is a robust promptable foundation model for single-image 3D human mesh recovery (HMR). Our method emphasizes data quality and diversity to maximize performance. We utilize the Meta Momentum Human Rig (MoHR), a new parametric mesh representation that decouples skeletal pose and body shape for improved accuracy and interpretability.
+**SAM 3D Body (3DB)** is a robust promptable foundation model for single-image full-body 3D human mesh recovery (HMR). Our method emphasizes data quality and diversity to maximize performance. We utilize the Momentum Human Rig (MHR), a new parametric mesh representation that decouples skeletal pose and body shape for improved accuracy and interpretability.
 
-3DB employs an encoder-decoder architecture and supports auxiliary prompts, including 2D keypoints and masks, enabling user-guided inference similar to the SAM family of models. We derive high-quality annotations from a multi-stage annotation pipeline using differentiable optimization, multi-view geometry, dense keypoint detection, and a data engine to collect and annotated data covering both common and rare poses across a wide range of viewpoints. Our experiments demonstrate substantial improvements over prior methods, with robust performance on challenging scenarios such as occlusions and rare poses.
+3DB employs an encoder-decoder architecture and supports auxiliary prompts, including 2D keypoints and masks, enabling user-guided inference similar to the SAM family of models. We derive high-quality annotations from a multi-stage annotation pipeline using differentiable optimization, multi-view geometry, dense keypoint detection, and a data engine to collect and annotated data covering both common and rare poses across a wide range of viewpoints.
 
-## Visual Comparisons
+## Visual Comparisons  [TODO: Jiawei and David Please Update this]
 
 <table>
 <thead>
@@ -62,10 +62,10 @@
 
 ## Latest updates
 
-**11/17/2025 -- Checkpoints Launched, Dataset Released, Web Demo and Paper are out**
+**11/19/2025 -- Checkpoints Launched, Dataset Released, Web Demo and Paper are out**
 - < MORE DETAILS HERE >
 
-## Installation
+## Installation  [TODO: Taosha and David Please Confirm this]
 See [Install.md](INSTALL.md)
 
 ## Usage - Inference
@@ -75,20 +75,22 @@ Models can be loaded directly from [Hugging Face]
 ```python
 from sam_3d_body import build_sam_3d_body_hf
 
-model = build_sam_3d_body_hf("facebook/sam-3d-body")
+model = build_sam_3d_body_hf("facebook/sam-3d-body-vith")
 outputs = model.process_one_image("path/to/image.jpg")
 ```
 
 Available models on HuggingFace:
-- `facebook/sam-3d-body`
-- `facebook/sam-3d-body-small`
+- `sam-3d-body-vith`
+- `sam-3d-body-dinov3`
+- `sam-3d-body-vitl`
 
 ## Usage - Fine-Tuning and Research
 
 ### Download checkpoints
 ```
-huggingface-cli download facebook/sam-3d-body --local-dir checkpoints/sam-3d-body
-huggingface-cli download facebook/sam-3d-body-small --local-dir checkpoints/sam-3d-body-small
+huggingface-cli download facebook/sam-3d-body-vith --local-dir checkpoints/sam-3d-body-vith
+huggingface-cli download facebook/sam-3d-body-dinov3 --local-dir checkpoints/sam-3d-body-dinov3
+huggingface-cli download facebook/sam-3d-body-vitl --local-dir checkpoints/sam-3d-body-vitl
 ```
 
 ### Load the model directly
@@ -113,7 +115,7 @@ The table below shows the SAM 3D Body checkpoints released on [TODO: Update this
 < TODO: Update when we run speedtests >
 Speed measured on an A100 with `torch 2.5.1, cuda 12.4`. See `benchmark.py` for an example on benchmarking (compiling all the model components). Compiling only the image encoder can be more flexible and also provide (a smaller) speed-up (set `compile_image_encoder: True` in the config).
 
-## SAM 3D Body Dataset [TODO: Devansh]
+## SAM 3D Body Dataset [TODO: Taosha please add this]
 
 < Info on the 3D annotations we're releasing >
 
@@ -121,7 +123,7 @@ Speed measured on an A100 with `torch 2.5.1, cuda 12.4`. See `benchmark.py` for 
 
 ## License
 
-The SAM 3D Body model checkpoints and code are licensed under [Apache 2.0](./LICENSE).
+The SAM 3D Body model checkpoints and code are licensed under [SAM License](./LICENSE).
 
 ## Contributing
 
