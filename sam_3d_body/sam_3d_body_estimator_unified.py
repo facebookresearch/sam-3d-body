@@ -45,6 +45,44 @@ def rotation_angle_difference(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
     # Compute angle difference
     angle = torch.acos(cos_theta_clamped)
     return angle
+    
+def fix_wrist_euler(wrist_xzy, limits_x=(-2.2, 1.0), limits_z=(-2.2, 1.5), limits_y=(-1.2, 1.5)):
+    """
+    wrist_xzy: B x 2 x 3 (X, Z, Y angles)
+    Returns: Fixed angles within joint limits
+    """
+    x, z, y = wrist_xzy[..., 0], wrist_xzy[..., 1], wrist_xzy[..., 2]
+    
+    x_alt = torch.atan2(torch.sin(x + torch.pi), torch.cos(x + torch.pi))
+    z_alt = torch.atan2(torch.sin(-(z + torch.pi)), torch.cos(-(z + torch.pi)))
+    y_alt = torch.atan2(torch.sin(y + torch.pi), torch.cos(y + torch.pi))
+    
+    # Calculate L2 violation distance
+    def calc_violation(val, limits):
+        below = torch.clamp(limits[0] - val, min=0.0)
+        above = torch.clamp(val - limits[1], min=0.0)
+        return below**2 + above**2
+    
+    violation_orig = (
+        calc_violation(x, limits_x) +
+        calc_violation(z, limits_z) +
+        calc_violation(y, limits_y)
+    )
+    
+    violation_alt = (
+        calc_violation(x_alt, limits_x) +
+        calc_violation(z_alt, limits_z) +
+        calc_violation(y_alt, limits_y)
+    )
+    
+    # Use alternative where it has lower L2 violation
+    use_alt = violation_alt < violation_orig
+    
+    # Stack alternative and apply mask
+    wrist_xzy_alt = torch.stack([x_alt, z_alt, y_alt], dim=-1)
+    result = torch.where(use_alt.unsqueeze(-1), wrist_xzy_alt, wrist_xzy)
+    
+    return result
 
 class SAM3DBodyEstimatorUnified:
     def __init__(
@@ -64,7 +102,7 @@ class SAM3DBodyEstimatorUnified:
         self.fov_estimator = fov_estimator
         self.prompt_wrists = prompt_wrists
         self.use_hand_box = use_hand_box
-        self.thresh_wrist_angle = 1.2   # we used 1.1 before
+        self.thresh_wrist_angle = 1.4   # we used 1.1 before
 
         self.faces = self.model.head_pose.faces.cpu().numpy()
         self.model.eval()
@@ -391,7 +429,7 @@ class SAM3DBodyEstimatorUnified:
         
         # Unflip output
         ## Flip scale
-        ### Get Proto values
+        ### Get MHR values
         scale_r_hands_mean = -0.1798856556415558
         scale_l_hands_mean = -0.18402963876724243
         scale_r_hands_std = 0.04739458113908768
@@ -419,7 +457,65 @@ class SAM3DBodyEstimatorUnified:
         batch_rhand = recursive_to(batch_rhand, "cuda")
         rhand_output = self.model.forward_step(batch_rhand)[0]
         rhand_output['atlas'] = rhand_output['atlas_hand']
-        
+
+        # Now, get some criteria for whehter to replace.
+        ## CRITERIA 1: LOCAL WRIST POSE DIFFERENCE
+        joint_rotations = pose_output['atlas']['joint_global_rots']
+        ### Get lowarm
+        lowarm_joint_idxs = torch.LongTensor([76, 40]).cuda() # left, right
+        lowarm_joint_rotations = joint_rotations[:, lowarm_joint_idxs] # B x 2 x 3 x 3
+        ### Get zero-wrist pose
+        wrist_twist_joint_idxs = torch.LongTensor([77, 41]).cuda() # left, right
+        wrist_zero_rot_pose = lowarm_joint_rotations @ self.model.head_pose.joint_rotation[wrist_twist_joint_idxs]
+        ### Get globals from left & right
+        left_joint_global_rots = lhand_output['atlas']['joint_global_rots']
+        right_joint_global_rots = rhand_output['atlas']['joint_global_rots']
+        pred_global_wrist_rotmat = torch.stack([
+            left_joint_global_rots[:, 78],
+            right_joint_global_rots[:, 42],
+        ], dim=1)
+        ### Now we want to get the local poses that lead to the wrist being pred_global_wrist_rotmat
+        fused_local_wrist_rotmat = torch.einsum('kabc,kabd->kadc', pred_global_wrist_rotmat, wrist_zero_rot_pose)
+        ### What's the angle difference?
+        angle_difference = rotation_angle_difference(ori_local_wrist_rotmat, fused_local_wrist_rotmat) # B x 2 x 3 x3
+        angle_difference_valid_mask = angle_difference < self.thresh_wrist_angle
+        ## CRITERIA 2: hand box size
+        hand_box_size_thresh = 64
+        hand_box_size_valid_mask = torch.stack([
+            (batch_lhand['bbox_scale'].flatten(0, 1) > hand_box_size_thresh).all(dim=1),
+            (batch_rhand['bbox_scale'].flatten(0, 1) > hand_box_size_thresh).all(dim=1),
+        ], dim=1)
+        ## CRITERIA 3: all hand 2D KPS (including wrist) inside of box.
+        hand_kps2d_thresh = 0.5
+        # hand_kps2d_thresh = 99
+        hand_kps2d_valid_mask = torch.stack([
+            lhand_output['atlas']['pred_keypoints_2d_cropped'].abs().amax(dim=(1, 2)) < hand_kps2d_thresh,
+            rhand_output['atlas']['pred_keypoints_2d_cropped'].abs().amax(dim=(1, 2)) < hand_kps2d_thresh,
+        ], dim=1)
+        ## CRITERIA 4: 2D wrist distance.
+        hand_wrist_kps2d_thresh = 0.25
+        # hand_wrist_kps2d_thresh = 99
+        kps_right_wrist_idx = 41
+        kps_left_wrist_idx = 62
+        right_kps_full = rhand_output['atlas']['pred_keypoints_2d'][:, [kps_right_wrist_idx]].clone()
+        left_kps_full = lhand_output['atlas']['pred_keypoints_2d'][:, [kps_right_wrist_idx]].clone()
+        left_kps_full[:, :, 0] = width - left_kps_full[:, :, 0] - 1 # Flip left hand
+        body_right_kps_full = pose_output['atlas']['pred_keypoints_2d'][:, [kps_right_wrist_idx]].clone()
+        body_left_kps_full = pose_output['atlas']['pred_keypoints_2d'][:, [kps_left_wrist_idx]].clone()
+        right_kps_dist = (right_kps_full - body_right_kps_full).flatten(0, 1).norm(dim=-1) / batch_lhand['bbox_scale'].flatten(0, 1)[:, 0]
+        left_kps_dist = (left_kps_full - body_left_kps_full).flatten(0, 1).norm(dim=-1) / batch_rhand['bbox_scale'].flatten(0, 1)[:, 0]
+        hand_wrist_kps2d_valid_mask = torch.stack([
+            left_kps_dist < hand_wrist_kps2d_thresh,
+            right_kps_dist < hand_wrist_kps2d_thresh,
+        ], dim=1)
+        ## Left-right
+        hand_valid_mask = (
+            angle_difference_valid_mask
+            & hand_box_size_valid_mask
+            & hand_kps2d_valid_mask
+            & hand_wrist_kps2d_valid_mask
+        )
+
         if self.prompt_wrists:
             # TODO: check rotation_angle_difference beforehand.
             # TODO: Left first or right first? Does it matter?
@@ -440,92 +536,53 @@ class SAM3DBodyEstimatorUnified:
             right_kps_crop = self.model._full_to_crop(batch, right_kps_full)
             left_kps_crop = self.model._full_to_crop(batch, left_kps_full)
 
-            if prompt_wrists_type == "v1":
-                # Assemble them into "fake" gt
-                right_left_kps_crop = torch.zeros(right_kps_crop.shape[0], 70, 3).to(right_kps_crop)
-                right_left_kps_crop[:, kps_right_wrist_idx, :2] = right_kps_crop.squeeze(1)
-                right_left_kps_crop[:, kps_left_wrist_idx, :2] = left_kps_crop.squeeze(1)
-                right_left_kps_crop[:, kps_right_wrist_idx, 2] = 1.0
-                right_left_kps_crop[:, kps_left_wrist_idx, 2] = 1.0
-                batch['keypoints_2d'] = right_left_kps_crop[:, None]
-                
-                # Set distance threshold to 0
-                self.model.keypoint_prompt_sampler.distance_thresh = 0.0
-                
-                # Two-step prompting
-                prev_prompt = []
-                full_output = {}
-                pose_output, keypoint_prompt = self.model._one_prompt_iter(
-                    batch, pose_output, prev_prompt, full_output
-                )
-                prev_prompt.append(keypoint_prompt.detach())
-                pose_output, keypoint_prompt = self.model._one_prompt_iter(
-                    batch, pose_output, prev_prompt, full_output
-                )
+            # Get right & left keypoints from crops; full image. Each are B x 1 x 2
+            kps_right_elbow_idx = 8
+            kps_left_elbow_idx = 7
+            right_kps_elbow_full = pose_output['atlas']['pred_keypoints_2d'][:, [kps_right_elbow_idx]].clone()
+            left_kps_elbow_full = pose_output['atlas']['pred_keypoints_2d'][:, [kps_left_elbow_idx]].clone()
             
-            elif prompt_wrists_type == "v3":
-                # Get right & left keypoints from crops; full image. Each are B x 1 x 2
-                kps_right_elbow_idx = 8
-                kps_left_elbow_idx = 7
-                right_kps_elbow_full = pose_output['atlas']['pred_keypoints_2d'][:, [kps_right_elbow_idx]].clone()
-                left_kps_elbow_full = pose_output['atlas']['pred_keypoints_2d'][:, [kps_left_elbow_idx]].clone()
-                
-                # Next, get them to crop-normalized space.
-                right_kps_elbow_crop = self.model._full_to_crop(batch, right_kps_elbow_full)
-                left_kps_elbow_crop = self.model._full_to_crop(batch, left_kps_elbow_full)
-        
-                # Assemble them into keypoint prompts
-                keypoint_prompt = torch.cat(
-                    [right_kps_crop, left_kps_crop, right_kps_elbow_crop, left_kps_elbow_crop], dim=1
-                )
-                keypoint_prompt = torch.cat([keypoint_prompt, keypoint_prompt[..., [-1]]], dim=-1)
-                keypoint_prompt[:, 0, -1] = kps_right_wrist_idx
-                keypoint_prompt[:, 1, -1] = kps_left_wrist_idx
-                keypoint_prompt[:, 2, -1] = kps_right_elbow_idx
-                keypoint_prompt[:, 3, -1] = kps_left_elbow_idx
-                
-                if keypoint_prompt.shape[0] > 1:
-                    # Replace invalid keypoints to dummy prompts
-                    invalid_prompt = (
-                        (keypoint_prompt[..., 0] < -0.5) |
-                        (keypoint_prompt[..., 0] > 0.5) |
-                        (keypoint_prompt[..., 1] < -0.5) |
-                        (keypoint_prompt[..., 1] > 0.5)
-                    ).unsqueeze(-1)
-                    dummy_prompt = torch.zeros((1, 1, 3)).to(keypoint_prompt)
-                    dummy_prompt[:, :, -1] = -2
-                    keypoint_prompt[:, :, :2] = torch.clamp(
-                        keypoint_prompt[:, :, :2] + 0.5, min=0.0, max=1.0
-                    )  # [-0.5, 0.5] --> [0, 1]
-                    keypoint_prompt = torch.where(invalid_prompt, dummy_prompt, keypoint_prompt)
-                else:
-                    # Only keep valid keypoints
-                    valid_keypoint = torch.all(
-                        (keypoint_prompt[:, :, :2] > -0.5) & (keypoint_prompt[:, :, :2] < 0.5),
-                        dim=2
-                    ).squeeze()
-                    keypoint_prompt = keypoint_prompt[:, valid_keypoint]
-                    keypoint_prompt[:, :, :2] = torch.clamp(
-                        keypoint_prompt[:, :, :2] + 0.5, min=0.0, max=1.0
-                    )  # [-0.5, 0.5] --> [0, 1]
-                
-                if len(keypoint_prompt):
-                    pose_output, _ = self._prompt_wrists(batch, pose_output, keypoint_prompt)
+            # Next, get them to crop-normalized space.
+            right_kps_elbow_crop = self.model._full_to_crop(batch, right_kps_elbow_full)
+            left_kps_elbow_crop = self.model._full_to_crop(batch, left_kps_elbow_full)
+    
+            # Assemble them into keypoint prompts
+            keypoint_prompt = torch.cat(
+                [right_kps_crop, left_kps_crop, right_kps_elbow_crop, left_kps_elbow_crop], dim=1
+            )
+            keypoint_prompt = torch.cat([keypoint_prompt, keypoint_prompt[..., [-1]]], dim=-1)
+            keypoint_prompt[:, 0, -1] = kps_right_wrist_idx
+            keypoint_prompt[:, 1, -1] = kps_left_wrist_idx
+            keypoint_prompt[:, 2, -1] = kps_right_elbow_idx
+            keypoint_prompt[:, 3, -1] = kps_left_elbow_idx
             
-            elif prompt_wrists_type == "v2":
-                ## TODO: only prompt valid wrists
-        
-                # Assemble them into keypoint prompts
-                keypoint_prompt = torch.cat(
-                    [right_kps_crop, left_kps_crop], dim=1
-                )
-                keypoint_prompt = torch.cat([keypoint_prompt, keypoint_prompt[..., [-1]]], dim=-1)
-                keypoint_prompt[:, 0, -1] = kps_right_wrist_idx
-                keypoint_prompt[:, 1, -1] = kps_left_wrist_idx
+            if keypoint_prompt.shape[0] > 1:
+                # Replace invalid keypoints to dummy prompts
+                invalid_prompt = (
+                    (keypoint_prompt[..., 0] < -0.5) |
+                    (keypoint_prompt[..., 0] > 0.5) |
+                    (keypoint_prompt[..., 1] < -0.5) |
+                    (keypoint_prompt[..., 1] > 0.5) |
+                    (~hand_valid_mask[..., [1, 0, 1, 0]])
+                ).unsqueeze(-1)
+                dummy_prompt = torch.zeros((1, 1, 3)).to(keypoint_prompt)
+                dummy_prompt[:, :, -1] = -2
+                keypoint_prompt[:, :, :2] = torch.clamp(
+                    keypoint_prompt[:, :, :2] + 0.5, min=0.0, max=1.0
+                )  # [-0.5, 0.5] --> [0, 1]
+                keypoint_prompt = torch.where(invalid_prompt, dummy_prompt, keypoint_prompt)
+            else:
+                # Only keep valid keypoints
+                valid_keypoint = (
+                    torch.all((keypoint_prompt[:, :, :2] > -0.5) & (keypoint_prompt[:, :, :2] < 0.5), dim=2)
+                    & hand_valid_mask[..., [1, 0, 1, 0]]
+                ).squeeze()
+                keypoint_prompt = keypoint_prompt[:, valid_keypoint]
                 keypoint_prompt[:, :, :2] = torch.clamp(
                     keypoint_prompt[:, :, :2] + 0.5, min=0.0, max=1.0
                 )  # [-0.5, 0.5] --> [0, 1]
             
+            if len(keypoint_prompt):
                 pose_output, _ = self._prompt_wrists(batch, pose_output, keypoint_prompt)
 
         # Drop in hand pose
@@ -574,11 +631,12 @@ class SAM3DBodyEstimatorUnified:
 
         # Now we want to get the local poses that lead to the wrist being pred_global_wrist_rotmat
         fused_local_wrist_rotmat = torch.einsum('kabc,kabd->kadc', pred_global_wrist_rotmat, wrist_zero_rot_pose)
-        wrist_xzy = roma.rotmat_to_euler("XZY", fused_local_wrist_rotmat)
+        wrist_xzy = fix_wrist_euler(roma.rotmat_to_euler("XZY", fused_local_wrist_rotmat))
         
         # Put it in.
         angle_difference = rotation_angle_difference(ori_local_wrist_rotmat, fused_local_wrist_rotmat) # B x 2 x 3 x3
         valid_angle = angle_difference < self.thresh_wrist_angle
+        valid_angle = valid_angle & hand_valid_mask
         valid_angle = valid_angle.unsqueeze(-1)
 
         body_pose = pose_output['atlas']['body_pose'][:, [41, 43, 42, 31, 33, 32]].unflatten(1, (2, 3))
@@ -718,4 +776,3 @@ class SAM3DBodyEstimatorUnified:
 
         output.update({"atlas": pose_output})
         return output, keypoint_prompt
-
