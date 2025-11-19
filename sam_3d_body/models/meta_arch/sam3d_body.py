@@ -577,7 +577,6 @@ class SAM3DBody(BaseModel):
             batch_size, 1, -1
         )  # B x 1 x 1024 (linear layered)
         num_pose_token = token_embeddings.shape[1]
-        assert num_pose_token == 1  # TODO: extend to multiple pose token (multi-hmr)
 
         image_augment, token_augment, token_mask = None, None, None
         if hasattr(self, "prompt_encoder") and keypoints is not None:
@@ -1375,9 +1374,6 @@ class SAM3DBody(BaseModel):
             & hand_wrist_kps2d_valid_mask
         )
         
-        # TODO: check rotation_angle_difference beforehand.
-        # TODO: Left first or right first? Does it matter?
-        # TODO: Remember, we have keypoint confidences. For hand crops as well.
         self.hand_batch_idx = []
         self.body_batch_idx = list(range(batch["img"].shape[1]))
         self.disable_hand = True

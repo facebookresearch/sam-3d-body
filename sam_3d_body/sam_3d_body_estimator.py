@@ -143,9 +143,6 @@ class SAM3DBodyEstimator:
             print("Running SAM to get mask from bbox...")
             # Generate masks using SAM2
             masks, masks_score = self.sam.run_sam(img, boxes)
-            # TODO: clean-up needed, move to notebook
-            # Stress test demo --> use the same bbox for all instances
-            # boxes = np.concatenate([boxes[:, :2].min(axis=0), boxes[:, 2:].max(axis=0)], axis=0)[None, :].repeat(boxes.shape[0], axis=0)
         else:
             masks, masks_score = None, None
 

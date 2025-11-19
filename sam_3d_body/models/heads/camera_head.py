@@ -63,7 +63,6 @@ class PerspectiveHead(nn.Module):
         bbox_size: torch.Tensor,
         img_size: torch.Tensor,
         cam_int: torch.Tensor,
-        is_atlas: bool = True,
         use_intrin_center: bool = False,
     ):
         """
@@ -74,8 +73,7 @@ class PerspectiveHead(nn.Module):
         """
         batch_size = points_3d.shape[0]
         pred_cam = pred_cam.clone()
-        if is_atlas:
-            pred_cam[..., [0, 2]] *= -1  # Camera system difference
+        pred_cam[..., [0, 2]] *= -1  # Camera system difference
 
         # Compute camera translation: (scale, x, y) --> (x, y, depth)
         # depth ~= f / s
