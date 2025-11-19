@@ -82,7 +82,6 @@ outputs = model.process_one_image("path/to/image.jpg")
 Available models on HuggingFace:
 - `sam-3d-body-vith`
 - `sam-3d-body-dinov3`
-- `sam-3d-body-vitl`
 
 ## Usage - Fine-Tuning and Research
 
@@ -90,7 +89,6 @@ Available models on HuggingFace:
 ```
 huggingface-cli download facebook/sam-3d-body-vith --local-dir checkpoints/sam-3d-body-vith
 huggingface-cli download facebook/sam-3d-body-dinov3 --local-dir checkpoints/sam-3d-body-dinov3
-huggingface-cli download facebook/sam-3d-body-vitl --local-dir checkpoints/sam-3d-body-vitl
 ```
 
 ### Load the model directly
