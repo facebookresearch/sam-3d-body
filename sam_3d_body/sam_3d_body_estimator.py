@@ -1,12 +1,10 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
 from typing import Optional, Union
 
-import numpy as np
-import torch
 import cv2
 
-from sam_3d_body.data.utils.io import load_image
-from sam_3d_body.data.utils.prepare_batch import prepare_batch
+import numpy as np
+import torch
 
 from sam_3d_body.data.transforms import (
     Compose,
@@ -14,6 +12,9 @@ from sam_3d_body.data.transforms import (
     TopdownAffine,
     VisionTransformWrapper,
 )
+
+from sam_3d_body.data.utils.io import load_image
+from sam_3d_body.data.utils.prepare_batch import prepare_batch
 from sam_3d_body.utils import recursive_to
 from torchvision.transforms import ToTensor
 
@@ -23,11 +24,11 @@ class SAM3DBodyEstimator:
         self,
         sam_3d_body_model,
         model_cfg,
-        human_detector = None,
-        human_segmentor = None,
-        fov_estimator = None,
-        prompt_wrists = True,
-        use_hand_box = True,
+        human_detector=None,
+        human_segmentor=None,
+        fov_estimator=None,
+        prompt_wrists=True,
+        use_hand_box=True,
     ):
         self.device = sam_3d_body_model.device
         self.model, self.cfg = sam_3d_body_model, model_cfg
@@ -47,7 +48,7 @@ class SAM3DBodyEstimator:
             print("Mask-condition inference is not supported...")
         if self.fov_estimator is None:
             print("No FOV estimator... Using the default FOV!")
-        
+
         self.transform = Compose(
             [
                 GetBBoxCenterScale(),
@@ -74,10 +75,11 @@ class SAM3DBodyEstimator:
         bbox_thr: float = 0.5,
         nms_thr: float = 0.3,
         use_mask: bool = False,
+        inference_type: str = "full",
     ):
         """
         Perform model prediction in top-down format: assuming input is a full image.
-        
+
         Args:
             img: Input image (path or numpy array)
             bboxes: Optional pre-computed bounding boxes
@@ -85,6 +87,10 @@ class SAM3DBodyEstimator:
             det_cat_id: Detection category ID
             bbox_thr: Bounding box threshold
             nms_thr: NMS threshold
+            inference_type:
+                - full: full-body inference with both body and hand decoders
+                - body: inference with body decoder only (still full-body output)
+                - hand: inference with hand decoder only (only hand output)
         """
 
         # clear all cached results
@@ -98,7 +104,7 @@ class SAM3DBodyEstimator:
             img = load_image(img, backend="cv2", image_format="bgr")
             image_format = "bgr"
         else:
-            print ("####### Please make sure the input image is in RGB format")
+            print("####### Please make sure the input image is in RGB format")
             image_format = "rgb"
         height, width = img.shape[:2]
 
@@ -130,15 +136,19 @@ class SAM3DBodyEstimator:
         # The following models expect RGB images instead of BGR
         if image_format == "bgr":
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        
+
         # Handle masks - either provided externally or generated via SAM2
         masks_score = None
         if masks is not None:
             # Use provided masks - ensure they match the number of detected boxes
             print(f"Using provided masks: {masks.shape}")
-            assert bboxes is not None, "Mask-conditioned inference requires bboxes input!"
+            assert (
+                bboxes is not None
+            ), "Mask-conditioned inference requires bboxes input!"
             masks = masks.reshape(-1, height, width, 1).astype(np.uint8)
-            masks_score = np.ones(len(masks), dtype=np.float32)  # Set high confidence for provided masks
+            masks_score = np.ones(
+                len(masks), dtype=np.float32
+            )  # Set high confidence for provided masks
             use_mask = True
         elif use_mask and self.sam is not None:
             print("Running SAM to get mask from bbox...")
@@ -162,7 +172,7 @@ class SAM3DBodyEstimator:
             batch["cam_int"] = cam_int.clone()
         elif self.fov_estimator is not None:
             print("Running FOV estimator ...")
-            input_image = batch['img_ori'][0].data
+            input_image = batch["img_ori"][0].data
             cam_int = self.fov_estimator.get_cam_intrinsics(input_image).to(
                 batch["img"]
             )
@@ -170,13 +180,17 @@ class SAM3DBodyEstimator:
         else:
             cam_int = batch["cam_int"].clone()
 
-        pose_output, batch_lhand, batch_rhand, _, _ = self.model.run_inference(
+        outputs = self.model.run_inference(
             img,
             batch,
-            self.transform_hand,
-            self.use_hand_box,
-            self.thresh_wrist_angle,
+            inference_type=inference_type,
+            transform_hand=self.transform_hand,
+            thresh_wrist_angle=self.thresh_wrist_angle,
         )
+        if inference_type == "full":
+            pose_output, batch_lhand, batch_rhand, _, _ = outputs
+        else:
+            pose_output = outputs
 
         out = pose_output["mhr"]
         out = recursive_to(out, "cpu")
@@ -200,21 +214,50 @@ class SAM3DBodyEstimator:
                     "expr_params": out["face"][idx],
                     "mask": masks[idx] if masks is not None else None,
                     "pred_joint_coords": out["pred_joint_coords"][idx],
-                    "pred_global_rots": out['joint_global_rots'][idx],
+                    "pred_global_rots": out["joint_global_rots"][idx],
                 }
             )
 
-            all_out[-1]["lhand_bbox"] = np.array([
-                (batch_lhand['bbox_center'].flatten(0, 1)[idx][0] - batch_lhand['bbox_scale'].flatten(0, 1)[idx][0] / 2).item(),
-                (batch_lhand['bbox_center'].flatten(0, 1)[idx][1] - batch_lhand['bbox_scale'].flatten(0, 1)[idx][1] / 2).item(),
-                (batch_lhand['bbox_center'].flatten(0, 1)[idx][0] + batch_lhand['bbox_scale'].flatten(0, 1)[idx][0] / 2).item(),
-                (batch_lhand['bbox_center'].flatten(0, 1)[idx][1] + batch_lhand['bbox_scale'].flatten(0, 1)[idx][1] / 2).item(),
-            ])
-            all_out[-1]["rhand_bbox"] = np.array([
-                (batch_rhand['bbox_center'].flatten(0, 1)[idx][0] - batch_rhand['bbox_scale'].flatten(0, 1)[idx][0] / 2).item(),
-                (batch_rhand['bbox_center'].flatten(0, 1)[idx][1] - batch_rhand['bbox_scale'].flatten(0, 1)[idx][1] / 2).item(),
-                (batch_rhand['bbox_center'].flatten(0, 1)[idx][0] + batch_rhand['bbox_scale'].flatten(0, 1)[idx][0] / 2).item(),
-                (batch_rhand['bbox_center'].flatten(0, 1)[idx][1] + batch_rhand['bbox_scale'].flatten(0, 1)[idx][1] / 2).item(),
-            ])
+            if inference_type == "full":
+                all_out[-1]["lhand_bbox"] = np.array(
+                    [
+                        (
+                            batch_lhand["bbox_center"].flatten(0, 1)[idx][0]
+                            - batch_lhand["bbox_scale"].flatten(0, 1)[idx][0] / 2
+                        ).item(),
+                        (
+                            batch_lhand["bbox_center"].flatten(0, 1)[idx][1]
+                            - batch_lhand["bbox_scale"].flatten(0, 1)[idx][1] / 2
+                        ).item(),
+                        (
+                            batch_lhand["bbox_center"].flatten(0, 1)[idx][0]
+                            + batch_lhand["bbox_scale"].flatten(0, 1)[idx][0] / 2
+                        ).item(),
+                        (
+                            batch_lhand["bbox_center"].flatten(0, 1)[idx][1]
+                            + batch_lhand["bbox_scale"].flatten(0, 1)[idx][1] / 2
+                        ).item(),
+                    ]
+                )
+                all_out[-1]["rhand_bbox"] = np.array(
+                    [
+                        (
+                            batch_rhand["bbox_center"].flatten(0, 1)[idx][0]
+                            - batch_rhand["bbox_scale"].flatten(0, 1)[idx][0] / 2
+                        ).item(),
+                        (
+                            batch_rhand["bbox_center"].flatten(0, 1)[idx][1]
+                            - batch_rhand["bbox_scale"].flatten(0, 1)[idx][1] / 2
+                        ).item(),
+                        (
+                            batch_rhand["bbox_center"].flatten(0, 1)[idx][0]
+                            + batch_rhand["bbox_scale"].flatten(0, 1)[idx][0] / 2
+                        ).item(),
+                        (
+                            batch_rhand["bbox_center"].flatten(0, 1)[idx][1]
+                            + batch_rhand["bbox_scale"].flatten(0, 1)[idx][1] / 2
+                        ).item(),
+                    ]
+                )
 
         return all_out

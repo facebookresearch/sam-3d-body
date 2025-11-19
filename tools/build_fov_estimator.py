@@ -9,21 +9,23 @@ class FOVEstimator:
 
         if name == "moge2":
             print("########### Using fov estimator: MoGe2...")
-            self.fov_estimator = load_moge(device)
+            self.fov_estimator = load_moge(device, **kwargs)
             self.fov_estimator_func = run_moge
 
             self.fov_estimator.eval()
         else:
             raise NotImplementedError
-    
+
     def get_cam_intrinsics(self, img, **kwargs):
         return self.fov_estimator_func(self.fov_estimator, img, self.device, **kwargs)
-        
 
-def load_moge(device):
+
+def load_moge(device, path=None):
     from moge.model.v2 import MoGeModel
 
-    moge_model = MoGeModel.from_pretrained("Ruicheng/moge-2-vitl-normal").to(device)
+    if path is None:
+        path = "Ruicheng/moge-2-vitl-normal"
+    moge_model = MoGeModel.from_pretrained(path).to(device)
     return moge_model
 
 
@@ -31,16 +33,14 @@ def run_moge(model, input_image, device):
     # We expect the image to be RGB already
     H, W, _ = input_image.shape
     input_image = torch.tensor(
-        input_image / 255,
-        dtype=torch.float32,
-        device=device
+        input_image / 255, dtype=torch.float32, device=device
     ).permute(2, 0, 1)
 
     # Infer w/ MoGe2
     moge_data = model.infer(input_image)
 
     # get intrinsics
-    intrinsics = denormalize_f(moge_data['intrinsics'].cpu().numpy(), H, W)
+    intrinsics = denormalize_f(moge_data["intrinsics"].cpu().numpy(), H, W)
     v_focal = intrinsics[1, 1]
 
     # override hfov with v_focal
@@ -69,9 +69,7 @@ def denormalize_f(norm_K, height, width):
     s_abs = 0
 
     # Construct absolute K matrix
-    abs_K = torch.tensor([
-        [fx_abs, s_abs, cx_abs],
-        [0.0, fy_abs, cy_abs],
-        [0.0, 0.0, 1.0]
-    ])
+    abs_K = torch.tensor(
+        [[fx_abs, s_abs, cx_abs], [0.0, fy_abs, cy_abs], [0.0, 0.0, 1.0]]
+    )
     return abs_K

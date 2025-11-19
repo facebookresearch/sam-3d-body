@@ -1,23 +1,27 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
 
-from typing import Dict, Optional, Tuple, Any
+from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
+import roma
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 from sam_3d_body.data.utils.prepare_batch import prepare_batch
-from sam_3d_body.utils.logging import get_pylogger
-import roma
+from sam_3d_body.models.decoders.prompt_encoder import PositionEmbeddingRandom
+from sam_3d_body.models.modules.mhr_utils import (
+    fix_wrist_euler,
+    rotation_angle_difference,
+)
 from sam_3d_body.utils import recursive_to
+from sam_3d_body.utils.logging import get_pylogger
+
 from ..backbones import create_backbone
 from ..decoders import build_decoder, build_keypoint_sampler, PromptEncoder
 from ..heads import build_head
-from ..modules.transformer import FFN, MLP
 from ..modules.camera_embed import CameraEncoder
-from sam_3d_body.models.modules.mhr_utils import rotation_angle_difference, fix_wrist_euler
-from sam_3d_body.models.decoders.prompt_encoder import PositionEmbeddingRandom
+from ..modules.transformer import FFN, MLP
 
 from .base_model import BaseModel
 
@@ -52,8 +56,12 @@ class SAM3DBody(BaseModel):
 
         # Create header for pose estimation output
         self.head_pose = build_head(self.cfg, self.cfg.MODEL.PERSON_HEAD.POSE_TYPE)
-        self.head_pose.hand_pose_comps_ori = nn.Parameter(self.head_pose.hand_pose_comps.clone(), requires_grad=False)
-        self.head_pose.hand_pose_comps.data = torch.eye(54).to(self.head_pose.hand_pose_comps.data).float()
+        self.head_pose.hand_pose_comps_ori = nn.Parameter(
+            self.head_pose.hand_pose_comps.clone(), requires_grad=False
+        )
+        self.head_pose.hand_pose_comps.data = (
+            torch.eye(54).to(self.head_pose.hand_pose_comps.data).float()
+        )
 
         # Initialize pose token with learnable params
         # Note: bias/initial value should be zero-pose in cont, not all-zeros
@@ -63,13 +71,15 @@ class SAM3DBody(BaseModel):
         self.head_pose_hand = build_head(
             self.cfg, self.cfg.MODEL.PERSON_HEAD.POSE_TYPE, enable_hand_model=True
         )
-        self.head_pose_hand.hand_pose_comps_ori = nn.Parameter(self.head_pose_hand.hand_pose_comps.clone(), requires_grad=False)
-        self.head_pose_hand.hand_pose_comps.data = torch.eye(54).to(self.head_pose_hand.hand_pose_comps.data).float()
+        self.head_pose_hand.hand_pose_comps_ori = nn.Parameter(
+            self.head_pose_hand.hand_pose_comps.clone(), requires_grad=False
+        )
+        self.head_pose_hand.hand_pose_comps.data = (
+            torch.eye(54).to(self.head_pose_hand.hand_pose_comps.data).float()
+        )
         self.init_pose_hand = nn.Embedding(1, self.head_pose_hand.npose)
 
-        self.head_camera = build_head(
-            self.cfg, self.cfg.MODEL.PERSON_HEAD.CAMERA_TYPE
-        )
+        self.head_camera = build_head(self.cfg, self.cfg.MODEL.PERSON_HEAD.CAMERA_TYPE)
         self.init_camera = nn.Embedding(1, self.head_camera.ncam)
         nn.init.zeros_(self.init_camera.weight)
 
@@ -92,9 +102,7 @@ class SAM3DBody(BaseModel):
         self.prev_to_token_mhr = nn.Linear(
             init_dim - cond_dim, self.cfg.MODEL.DECODER.DIM
         )
-        self.init_to_token_mhr_hand = nn.Linear(
-            init_dim, self.cfg.MODEL.DECODER.DIM
-        )
+        self.init_to_token_mhr_hand = nn.Linear(init_dim, self.cfg.MODEL.DECODER.DIM)
         self.prev_to_token_mhr_hand = nn.Linear(
             init_dim - cond_dim, self.cfg.MODEL.DECODER.DIM
         )
@@ -286,7 +294,6 @@ class SAM3DBody(BaseModel):
         prev_estimate: Optional[torch.Tensor] = None,
         condition_info: Optional[torch.Tensor] = None,
         batch=None,
-        full_output=None,
     ):
         """
         Args:
@@ -364,9 +371,7 @@ class SAM3DBody(BaseModel):
                     image_embeddings.shape[-2:]
                 )  # (1, C, H, W)
 
-            image_embeddings = self.ray_cond_emb(
-                image_embeddings, batch["ray_cond"]
-            )
+            image_embeddings = self.ray_cond_emb(image_embeddings, batch["ray_cond"])
 
             # To start, keypoints is all [0, 0, -2]. The points get sent into self.pe_layer._pe_encoding,
             # the labels determine the embedding weight (special one for -2, -1, then each of joint.)
@@ -388,9 +393,7 @@ class SAM3DBody(BaseModel):
             )
 
             token_augment = torch.zeros_like(token_embeddings)
-            token_augment[:, [num_pose_token]] = (
-                prev_embeddings
-            )
+            token_augment[:, [num_pose_token]] = prev_embeddings
             token_augment[:, (num_pose_token + 1) :] = prompt_embeddings
             token_mask = None
 
@@ -473,7 +476,7 @@ class SAM3DBody(BaseModel):
                 pred_cam = self.head_camera(pose_token, prev_camera)
                 pose_output["pred_cam"] = pred_cam
             # Run camera projection
-            pose_output = self.camera_project(pose_output, batch, full_output)
+            pose_output = self.camera_project(pose_output, batch)
 
             # Get 2D KPS in crop
             pose_output["pred_keypoints_2d_cropped"] = self._full_to_crop(
@@ -490,9 +493,7 @@ class SAM3DBody(BaseModel):
         # Combine the 2D and 3D functionse
         def keypoint_token_update_fn_comb(*args):
             if kp_token_update_fn is not None:
-                args = kp_token_update_fn(
-                    kps_emb_start_idx, image_embeddings, *args
-                )
+                args = kp_token_update_fn(kps_emb_start_idx, image_embeddings, *args)
             if kp3d_token_update_fn is not None:
                 args = kp3d_token_update_fn(kps3d_emb_start_idx, *args)
             return args
@@ -523,7 +524,6 @@ class SAM3DBody(BaseModel):
         prev_estimate: Optional[torch.Tensor] = None,
         condition_info: Optional[torch.Tensor] = None,
         batch=None,
-        full_output=None,
     ):
         """
         Args:
@@ -623,9 +623,7 @@ class SAM3DBody(BaseModel):
             )
 
             token_augment = torch.zeros_like(token_embeddings)
-            token_augment[:, [num_pose_token]] = (
-                prev_embeddings
-            )
+            token_augment[:, [num_pose_token]] = prev_embeddings
             token_augment[:, (num_pose_token + 1) :] = prompt_embeddings
             token_mask = None
 
@@ -712,7 +710,7 @@ class SAM3DBody(BaseModel):
                 pred_cam = self.head_camera_hand(pose_token, prev_camera)
                 pose_output["pred_cam"] = pred_cam
             # Run camera projection
-            pose_output = self.camera_project_hand(pose_output, batch, full_output)
+            pose_output = self.camera_project_hand(pose_output, batch)
 
             # Get 2D KPS in crop
             pose_output["pred_keypoints_2d_cropped"] = self._full_to_crop(
@@ -729,9 +727,7 @@ class SAM3DBody(BaseModel):
         # Combine the 2D and 3D functionse
         def keypoint_token_update_fn_comb(*args):
             if kp_token_update_fn is not None:
-                args = kp_token_update_fn(
-                    kps_emb_start_idx, image_embeddings, *args
-                )
+                args = kp_token_update_fn(kps_emb_start_idx, image_embeddings, *args)
             if kp3d_token_update_fn is not None:
                 args = kp3d_token_update_fn(kps3d_emb_start_idx, *args)
             return args
@@ -835,9 +831,7 @@ class SAM3DBody(BaseModel):
                 ],
                 dim=1,
             ).unsqueeze(dim=1)
-            if hasattr(
-                self, "init_camera_hand"
-            ):
+            if hasattr(self, "init_camera_hand"):
                 prev_estimate_hand = torch.cat(
                     [
                         prev_estimate_hand,
@@ -923,7 +917,7 @@ class SAM3DBody(BaseModel):
 
         return pred_keypoints_2d_cropped
 
-    def camera_project(self, pose_output: Dict, batch: Dict, full_output: Dict) -> Dict:
+    def camera_project(self, pose_output: Dict, batch: Dict) -> Dict:
         """
         Project 3D keypoints to 2D using the camera parameters.
         Args:
@@ -978,9 +972,7 @@ class SAM3DBody(BaseModel):
 
         return pose_output
 
-    def camera_project_hand(
-        self, pose_output: Dict, batch: Dict, full_output: Dict
-    ) -> Dict:
+    def camera_project_hand(self, pose_output: Dict, batch: Dict) -> Dict:
         """
         Project 3D keypoints to 2D using the camera parameters.
         Args:
@@ -1065,11 +1057,7 @@ class SAM3DBody(BaseModel):
             batch["img"].dtype
         )  # This is B x num_person x 2 x H x W
 
-    def forward_pose_branch(
-        self,
-        batch: Dict,
-        full_output: Dict,
-    ) -> Dict:
+    def forward_pose_branch(self, batch: Dict) -> Dict:
         """Run a forward pass for the crop-image (pose) branch."""
         batch_size, num_person = batch["img"].shape[:2]
 
@@ -1090,9 +1078,7 @@ class SAM3DBody(BaseModel):
         )
 
         # Optionally get ray conditioining
-        ray_cond = self.get_ray_condition(
-            batch
-        )  # This is B x num_person x 2 x H x W
+        ray_cond = self.get_ray_condition(batch)  # This is B x num_person x 2 x H x W
         ray_cond = self._flatten_person(ray_cond)
         if self.cfg.MODEL.BACKBONE.TYPE in [
             "vit_hmr",
@@ -1147,7 +1133,6 @@ class SAM3DBody(BaseModel):
                 prev_estimate=None,
                 condition_info=condition_info[self.body_batch_idx],
                 batch=batch,
-                full_output=None,
             )
             pose_output = pose_output[-1]
         if len(self.hand_batch_idx):
@@ -1158,7 +1143,6 @@ class SAM3DBody(BaseModel):
                 prev_estimate=None,
                 condition_info=condition_info[self.hand_batch_idx],
                 batch=batch,
-                full_output=None,
             )
             pose_output_hand = pose_output_hand[-1]
 
@@ -1187,84 +1171,85 @@ class SAM3DBody(BaseModel):
                 hand_coords_hand_batch = self.bbox_embed(
                     output_hand_box_tokens_hand_batch
                 ).sigmoid()  # x1, y1, w, h for hand samples
-                hand_logits_hand_batch = self.hand_cls_embed(output_hand_box_tokens_hand_batch)
+                hand_logits_hand_batch = self.hand_cls_embed(
+                    output_hand_box_tokens_hand_batch
+                )
 
                 output["mhr_hand"]["hand_box"] = hand_coords_hand_batch
                 output["mhr_hand"]["hand_logits"] = hand_logits_hand_batch
 
         return output
 
-    def forward_step(self, batch: Dict) -> Tuple[Dict, Dict]:
-        # Full-image encoder
-        full_output = {}
+    def forward_step(
+        self, batch: Dict, decoder_type: str = "body"
+    ) -> Tuple[Dict, Dict]:
+        batch_size, num_person = batch["img"].shape[:2]
+
+        if decoder_type == "body":
+            self.hand_batch_idx = []
+            self.body_batch_idx = list(range(batch_size * num_person))
+        elif decoder_type == "hand":
+            self.hand_batch_idx = list(range(batch_size * num_person))
+            self.body_batch_idx = []
+        else:
+            ValueError("Invalid decoder type: ", decoder_type)
 
         # Crop-image (pose) branch
-        pose_output = self.forward_pose_branch(batch, full_output)
+        pose_output = self.forward_pose_branch(batch)
 
-        return pose_output, full_output
+        return pose_output
 
     def run_inference(
         self,
         img,
         batch: Dict,
-        transform_hand,
-        use_hand_box=True,
+        inference_type: str = "full",
+        transform_hand: Any = None,
         thresh_wrist_angle=1.4,
     ):
+        """
+        Run 3DB inference (optionally with hand detector).
+
+        inference_type:
+            - full: full-body inference with both body and hand decoders
+            - body: inference with body decoder only (still full-body output)
+            - hand: inference with hand decoder only (only hand output)
+        """
+
         height, width = img.shape[:2]
         cam_int = batch["cam_int"].clone()
 
-        ## Stage 1: Body
-        self.hand_batch_idx = []
-        self.body_batch_idx = list(range(batch["img"].shape[1]))
-        self.disable_hand = True
-        self.disable_body = False
-        pose_output, _ = self.forward_step(batch)
-        batch = self._get_hand_box(pose_output, batch, scale_factor=None)
+        if inference_type == "body":
+            pose_output = self.forward_step(batch, decoder_type="body")
+            return pose_output
+        elif inference_type == "hand":
+            pose_output = self.forward_step(batch, decoder_type="hand")
+            return pose_output
+        elif not inference_type == "full":
+            ValueError("Invalid inference type: ", inference_type)
+
+        # Step 1. For full-body inference, we first inference with the body decoder.
+        pose_output = self.forward_step(batch, decoder_type="body")
+        left_xyxy, right_xyxy = self._get_hand_box(pose_output, batch)
         ori_local_wrist_rotmat = roma.euler_to_rotmat(
             "XZY",
-            pose_output['mhr']['body_pose'][:, [41, 43, 42, 31, 33, 32]].unflatten(1, (2, 3))
+            pose_output["mhr"]["body_pose"][:, [41, 43, 42, 31, 33, 32]].unflatten(
+                1, (2, 3)
+            ),
         )
 
-        if use_hand_box:
-            # Assuming square crop into backbone
-            pred_left_hand_box = pose_output["mhr"]["hand_box"][:, 0].detach().cpu().numpy() * self.cfg.MODEL.IMAGE_SIZE[0]
-            pred_right_hand_box = pose_output["mhr"]["hand_box"][:, 1].detach().cpu().numpy() * self.cfg.MODEL.IMAGE_SIZE[0]
-
-            # Change boxes into squares
-            batch['left_center'] = pred_left_hand_box[:, :2]
-            batch['left_scale'] = pred_left_hand_box[:, 2:].max(axis=1, keepdims=True).repeat(2, axis=1)
-            batch['right_center'] = pred_right_hand_box[:, :2]
-            batch['right_scale'] = pred_right_hand_box[:, 2:].max(axis=1, keepdims=True).repeat(2, axis=1)
-
-            # Crop to full. batch["affine_trans"] is full-to-crop, right application
-            batch['left_scale'] = batch['left_scale'] / batch["affine_trans"][0, :, 0, 0].cpu().numpy()[:, None]
-            batch['right_scale'] = batch['right_scale'] / batch["affine_trans"][0, :, 0, 0].cpu().numpy()[:, None]
-            batch['left_center'] = (batch['left_center'] - batch["affine_trans"][0, :, [0, 1], [2, 2]].cpu().numpy()) / batch["affine_trans"][0, :, 0, 0].cpu().numpy()[:, None]
-            batch['right_center'] = (batch['right_center'] - batch["affine_trans"][0, :, [0, 1], [2, 2]].cpu().numpy()) / batch["affine_trans"][0, :, 0, 0].cpu().numpy()[:, None]
-
-        # Stage 3: Re-run with each hand
-        self.hand_batch_idx = list(range(batch["img"].shape[1]))
-        self.body_batch_idx = []
-        self.disable_hand = False
-        self.disable_body = True
-        ## Left...
-        left_xyxy = np.concatenate([
-            (batch['left_center'][:, 0] - batch['left_scale'][:, 0] * 1 / 2).reshape(-1, 1),
-            (batch['left_center'][:, 1] - batch['left_scale'][:, 1] * 1 / 2).reshape(-1, 1),
-            (batch['left_center'][:, 0] + batch['left_scale'][:, 0] * 1 / 2).reshape(-1, 1),
-            (batch['left_center'][:, 1] + batch['left_scale'][:, 1] * 1 / 2).reshape(-1, 1),
-        ], axis=1)
-
-        # Flip image & box
+        # Step 2. Re-run with each hand
+        ## Left... Flip image & box
         flipped_img = img[:, ::-1]
         tmp = left_xyxy.copy()
         left_xyxy[:, 0] = width - tmp[:, 2] - 1
         left_xyxy[:, 2] = width - tmp[:, 0] - 1
 
-        batch_lhand = prepare_batch(flipped_img, transform_hand, left_xyxy, cam_int=cam_int.clone())
+        batch_lhand = prepare_batch(
+            flipped_img, transform_hand, left_xyxy, cam_int=cam_int.clone()
+        )
         batch_lhand = recursive_to(batch_lhand, "cuda")
-        lhand_output = self.forward_step(batch_lhand)[0]
+        lhand_output = self.forward_step(batch_lhand, decoder_type="hand")
 
         # Unflip output
         ## Flip scale
@@ -1274,75 +1259,125 @@ class SAM3DBody(BaseModel):
         scale_r_hands_std = self.head_pose.scale_comps[8, 8].item()
         scale_l_hands_std = self.head_pose.scale_comps[9, 9].item()
         ### Apply
-        lhand_output['mhr_hand']['scale'][:, 9] = ((scale_r_hands_mean + scale_r_hands_std * lhand_output['mhr_hand']['scale'][:, 8]) - scale_l_hands_mean) / scale_l_hands_std
+        lhand_output["mhr_hand"]["scale"][:, 9] = (
+            (
+                scale_r_hands_mean
+                + scale_r_hands_std * lhand_output["mhr_hand"]["scale"][:, 8]
+            )
+            - scale_l_hands_mean
+        ) / scale_l_hands_std
         ## Get the right hand global rotation, flip it, put it in as left.
-        lhand_output['mhr_hand']['joint_global_rots'][:, 78] = lhand_output['mhr_hand']['joint_global_rots'][:, 42].clone()
-        lhand_output['mhr_hand']['joint_global_rots'][:, 78, [1, 2], :] *= -1
+        lhand_output["mhr_hand"]["joint_global_rots"][:, 78] = lhand_output["mhr_hand"][
+            "joint_global_rots"
+        ][:, 42].clone()
+        lhand_output["mhr_hand"]["joint_global_rots"][:, 78, [1, 2], :] *= -1
         ### Flip hand pose
-        lhand_output['mhr_hand']['hand'][:, :54] = lhand_output['mhr_hand']['hand'][:, 54:]
+        lhand_output["mhr_hand"]["hand"][:, :54] = lhand_output["mhr_hand"]["hand"][
+            :, 54:
+        ]
         ### Unflip box
-        batch_lhand['bbox_center'][:, :, 0] = width - batch_lhand['bbox_center'][:, :, 0] - 1
+        batch_lhand["bbox_center"][:, :, 0] = (
+            width - batch_lhand["bbox_center"][:, :, 0] - 1
+        )
 
         ## Right...
-        right_xyxy = np.concatenate([
-            (batch['right_center'][:, 0] - batch['right_scale'][:, 0] * 1 / 2).reshape(-1, 1),
-            (batch['right_center'][:, 1] - batch['right_scale'][:, 1] * 1 / 2).reshape(-1, 1),
-            (batch['right_center'][:, 0] + batch['right_scale'][:, 0] * 1 / 2).reshape(-1, 1),
-            (batch['right_center'][:, 1] + batch['right_scale'][:, 1] * 1 / 2).reshape(-1, 1),
-        ], axis=1)
-
-        batch_rhand = prepare_batch(img, transform_hand, right_xyxy, cam_int=cam_int.clone())
+        batch_rhand = prepare_batch(
+            img, transform_hand, right_xyxy, cam_int=cam_int.clone()
+        )
         batch_rhand = recursive_to(batch_rhand, "cuda")
-        rhand_output = self.forward_step(batch_rhand)[0]
+        rhand_output = self.forward_step(batch_rhand, decoder_type="hand")
 
-        # Now, get some criteria for whehter to replace.
+        # Step 3. replace hand pose estimation from the body decoder.
         ## CRITERIA 1: LOCAL WRIST POSE DIFFERENCE
-        joint_rotations = pose_output['mhr']['joint_global_rots']
+        joint_rotations = pose_output["mhr"]["joint_global_rots"]
         ### Get lowarm
-        lowarm_joint_idxs = torch.LongTensor([76, 40]).cuda() # left, right
-        lowarm_joint_rotations = joint_rotations[:, lowarm_joint_idxs] # B x 2 x 3 x 3
+        lowarm_joint_idxs = torch.LongTensor([76, 40]).cuda()  # left, right
+        lowarm_joint_rotations = joint_rotations[:, lowarm_joint_idxs]  # B x 2 x 3 x 3
         ### Get zero-wrist pose
-        wrist_twist_joint_idxs = torch.LongTensor([77, 41]).cuda() # left, right
-        wrist_zero_rot_pose = lowarm_joint_rotations @ self.head_pose.joint_rotation[wrist_twist_joint_idxs]
+        wrist_twist_joint_idxs = torch.LongTensor([77, 41]).cuda()  # left, right
+        wrist_zero_rot_pose = (
+            lowarm_joint_rotations
+            @ self.head_pose.joint_rotation[wrist_twist_joint_idxs]
+        )
         ### Get globals from left & right
-        left_joint_global_rots = lhand_output['mhr_hand']['joint_global_rots']
-        right_joint_global_rots = rhand_output['mhr_hand']['joint_global_rots']
-        pred_global_wrist_rotmat = torch.stack([
-            left_joint_global_rots[:, 78],
-            right_joint_global_rots[:, 42],
-        ], dim=1)
-        ### Now we want to get the local poses that lead to the wrist being pred_global_wrist_rotmat
-        fused_local_wrist_rotmat = torch.einsum('kabc,kabd->kadc', pred_global_wrist_rotmat, wrist_zero_rot_pose)
-        ### What's the angle difference?
-        angle_difference = rotation_angle_difference(ori_local_wrist_rotmat, fused_local_wrist_rotmat) # B x 2 x 3 x3
+        left_joint_global_rots = lhand_output["mhr_hand"]["joint_global_rots"]
+        right_joint_global_rots = rhand_output["mhr_hand"]["joint_global_rots"]
+        pred_global_wrist_rotmat = torch.stack(
+            [
+                left_joint_global_rots[:, 78],
+                right_joint_global_rots[:, 42],
+            ],
+            dim=1,
+        )
+        ### Get the local poses that lead to the wrist being pred_global_wrist_rotmat
+        fused_local_wrist_rotmat = torch.einsum(
+            "kabc,kabd->kadc", pred_global_wrist_rotmat, wrist_zero_rot_pose
+        )
+        angle_difference = rotation_angle_difference(
+            ori_local_wrist_rotmat, fused_local_wrist_rotmat
+        )  # B x 2 x 3 x3
         angle_difference_valid_mask = angle_difference < thresh_wrist_angle
+
         ## CRITERIA 2: hand box size
         hand_box_size_thresh = 64
-        hand_box_size_valid_mask = torch.stack([
-            (batch_lhand['bbox_scale'].flatten(0, 1) > hand_box_size_thresh).all(dim=1),
-            (batch_rhand['bbox_scale'].flatten(0, 1) > hand_box_size_thresh).all(dim=1),
-        ], dim=1)
+        hand_box_size_valid_mask = torch.stack(
+            [
+                (batch_lhand["bbox_scale"].flatten(0, 1) > hand_box_size_thresh).all(
+                    dim=1
+                ),
+                (batch_rhand["bbox_scale"].flatten(0, 1) > hand_box_size_thresh).all(
+                    dim=1
+                ),
+            ],
+            dim=1,
+        )
+
         ## CRITERIA 3: all hand 2D KPS (including wrist) inside of box.
         hand_kps2d_thresh = 0.5
-        hand_kps2d_valid_mask = torch.stack([
-            lhand_output['mhr_hand']['pred_keypoints_2d_cropped'].abs().amax(dim=(1, 2)) < hand_kps2d_thresh,
-            rhand_output['mhr_hand']['pred_keypoints_2d_cropped'].abs().amax(dim=(1, 2)) < hand_kps2d_thresh,
-        ], dim=1)
+        hand_kps2d_valid_mask = torch.stack(
+            [
+                lhand_output["mhr_hand"]["pred_keypoints_2d_cropped"]
+                .abs()
+                .amax(dim=(1, 2))
+                < hand_kps2d_thresh,
+                rhand_output["mhr_hand"]["pred_keypoints_2d_cropped"]
+                .abs()
+                .amax(dim=(1, 2))
+                < hand_kps2d_thresh,
+            ],
+            dim=1,
+        )
+
         ## CRITERIA 4: 2D wrist distance.
         hand_wrist_kps2d_thresh = 0.25
         kps_right_wrist_idx = 41
         kps_left_wrist_idx = 62
-        right_kps_full = rhand_output['mhr_hand']['pred_keypoints_2d'][:, [kps_right_wrist_idx]].clone()
-        left_kps_full = lhand_output['mhr_hand']['pred_keypoints_2d'][:, [kps_right_wrist_idx]].clone()
-        left_kps_full[:, :, 0] = width - left_kps_full[:, :, 0] - 1 # Flip left hand
-        body_right_kps_full = pose_output['mhr']['pred_keypoints_2d'][:, [kps_right_wrist_idx]].clone()
-        body_left_kps_full = pose_output['mhr']['pred_keypoints_2d'][:, [kps_left_wrist_idx]].clone()
-        right_kps_dist = (right_kps_full - body_right_kps_full).flatten(0, 1).norm(dim=-1) / batch_lhand['bbox_scale'].flatten(0, 1)[:, 0]
-        left_kps_dist = (left_kps_full - body_left_kps_full).flatten(0, 1).norm(dim=-1) / batch_rhand['bbox_scale'].flatten(0, 1)[:, 0]
-        hand_wrist_kps2d_valid_mask = torch.stack([
-            left_kps_dist < hand_wrist_kps2d_thresh,
-            right_kps_dist < hand_wrist_kps2d_thresh,
-        ], dim=1)
+        right_kps_full = rhand_output["mhr_hand"]["pred_keypoints_2d"][
+            :, [kps_right_wrist_idx]
+        ].clone()
+        left_kps_full = lhand_output["mhr_hand"]["pred_keypoints_2d"][
+            :, [kps_right_wrist_idx]
+        ].clone()
+        left_kps_full[:, :, 0] = width - left_kps_full[:, :, 0] - 1  # Flip left hand
+        body_right_kps_full = pose_output["mhr"]["pred_keypoints_2d"][
+            :, [kps_right_wrist_idx]
+        ].clone()
+        body_left_kps_full = pose_output["mhr"]["pred_keypoints_2d"][
+            :, [kps_left_wrist_idx]
+        ].clone()
+        right_kps_dist = (right_kps_full - body_right_kps_full).flatten(0, 1).norm(
+            dim=-1
+        ) / batch_lhand["bbox_scale"].flatten(0, 1)[:, 0]
+        left_kps_dist = (left_kps_full - body_left_kps_full).flatten(0, 1).norm(
+            dim=-1
+        ) / batch_rhand["bbox_scale"].flatten(0, 1)[:, 0]
+        hand_wrist_kps2d_valid_mask = torch.stack(
+            [
+                left_kps_dist < hand_wrist_kps2d_thresh,
+                right_kps_dist < hand_wrist_kps2d_thresh,
+            ],
+            dim=1,
+        )
         ## Left-right
         hand_valid_mask = (
             angle_difference_valid_mask
@@ -1351,27 +1386,37 @@ class SAM3DBody(BaseModel):
             & hand_wrist_kps2d_valid_mask
         )
 
+        # Keypoint prompting with the body decoder.
+        # We use the wrist location from the hand decoder and the elbow location
+        # from the body decoder as prompts to get an updated body pose estimation.
+        batch_size, num_person = batch["img"].shape[:2]
         self.hand_batch_idx = []
-        self.body_batch_idx = list(range(batch["img"].shape[1]))
-        self.disable_hand = True
-        self.disable_body = False
+        self.body_batch_idx = list(range(batch_size * num_person))
 
-        # Get right & left keypoints from crops; full image. Each are B x 1 x 2
+        ## Get right & left wrist keypoints from crops; full image. Each are B x 1 x 2
         kps_right_wrist_idx = 41
         kps_left_wrist_idx = 62
-        right_kps_full = rhand_output['mhr_hand']['pred_keypoints_2d'][:, [kps_right_wrist_idx]].clone()
-        left_kps_full = lhand_output['mhr_hand']['pred_keypoints_2d'][:, [kps_right_wrist_idx]].clone()
-        left_kps_full[:, :, 0] = width - left_kps_full[:, :, 0] - 1 # Flip left hand
+        right_kps_full = rhand_output["mhr_hand"]["pred_keypoints_2d"][
+            :, [kps_right_wrist_idx]
+        ].clone()
+        left_kps_full = lhand_output["mhr_hand"]["pred_keypoints_2d"][
+            :, [kps_right_wrist_idx]
+        ].clone()
+        left_kps_full[:, :, 0] = width - left_kps_full[:, :, 0] - 1  # Flip left hand
 
         # Next, get them to crop-normalized space.
         right_kps_crop = self._full_to_crop(batch, right_kps_full)
         left_kps_crop = self._full_to_crop(batch, left_kps_full)
 
-        # Get right & left keypoints from crops; full image. Each are B x 1 x 2
+        # Get right & left elbow keypoints from crops; full image. Each are B x 1 x 2
         kps_right_elbow_idx = 8
         kps_left_elbow_idx = 7
-        right_kps_elbow_full = pose_output['mhr']['pred_keypoints_2d'][:, [kps_right_elbow_idx]].clone()
-        left_kps_elbow_full = pose_output['mhr']['pred_keypoints_2d'][:, [kps_left_elbow_idx]].clone()
+        right_kps_elbow_full = pose_output["mhr"]["pred_keypoints_2d"][
+            :, [kps_right_elbow_idx]
+        ].clone()
+        left_kps_elbow_full = pose_output["mhr"]["pred_keypoints_2d"][
+            :, [kps_left_elbow_idx]
+        ].clone()
 
         # Next, get them to crop-normalized space.
         right_kps_elbow_crop = self._full_to_crop(batch, right_kps_elbow_full)
@@ -1379,9 +1424,12 @@ class SAM3DBody(BaseModel):
 
         # Assemble them into keypoint prompts
         keypoint_prompt = torch.cat(
-            [right_kps_crop, left_kps_crop, right_kps_elbow_crop, left_kps_elbow_crop], dim=1
+            [right_kps_crop, left_kps_crop, right_kps_elbow_crop, left_kps_elbow_crop],
+            dim=1,
         )
-        keypoint_prompt = torch.cat([keypoint_prompt, keypoint_prompt[..., [-1]]], dim=-1)
+        keypoint_prompt = torch.cat(
+            [keypoint_prompt, keypoint_prompt[..., [-1]]], dim=-1
+        )
         keypoint_prompt[:, 0, -1] = kps_right_wrist_idx
         keypoint_prompt[:, 1, -1] = kps_left_wrist_idx
         keypoint_prompt[:, 2, -1] = kps_right_elbow_idx
@@ -1390,11 +1438,11 @@ class SAM3DBody(BaseModel):
         if keypoint_prompt.shape[0] > 1:
             # Replace invalid keypoints to dummy prompts
             invalid_prompt = (
-                (keypoint_prompt[..., 0] < -0.5) |
-                (keypoint_prompt[..., 0] > 0.5) |
-                (keypoint_prompt[..., 1] < -0.5) |
-                (keypoint_prompt[..., 1] > 0.5) |
-                (~hand_valid_mask[..., [1, 0, 1, 0]])
+                (keypoint_prompt[..., 0] < -0.5)
+                | (keypoint_prompt[..., 0] > 0.5)
+                | (keypoint_prompt[..., 1] < -0.5)
+                | (keypoint_prompt[..., 1] > 0.5)
+                | (~hand_valid_mask[..., [1, 0, 1, 0]])
             ).unsqueeze(-1)
             dummy_prompt = torch.zeros((1, 1, 3)).to(keypoint_prompt)
             dummy_prompt[:, :, -1] = -2
@@ -1405,7 +1453,11 @@ class SAM3DBody(BaseModel):
         else:
             # Only keep valid keypoints
             valid_keypoint = (
-                torch.all((keypoint_prompt[:, :, :2] > -0.5) & (keypoint_prompt[:, :, :2] < 0.5), dim=2)
+                torch.all(
+                    (keypoint_prompt[:, :, :2] > -0.5)
+                    & (keypoint_prompt[:, :, :2] < 0.5),
+                    dim=2,
+                )
                 & hand_valid_mask[..., [1, 0, 1, 0]]
             ).squeeze()
             keypoint_prompt = keypoint_prompt[:, valid_keypoint]
@@ -1414,127 +1466,188 @@ class SAM3DBody(BaseModel):
             )  # [-0.5, 0.5] --> [0, 1]
 
         if keypoint_prompt.numel() != 0:
-            pose_output, _ = self.run_keypoint_prompt(batch, pose_output, keypoint_prompt)
+            pose_output, _ = self.run_keypoint_prompt(
+                batch, pose_output, keypoint_prompt
+            )
 
         ##############################################################################
 
         # Drop in hand pose
-        left_hand_pose_params = lhand_output['mhr_hand']['hand'][:, :54]
-        right_hand_pose_params = rhand_output['mhr_hand']['hand'][:, 54:]
-        updated_hand_pose = torch.cat([left_hand_pose_params, right_hand_pose_params], dim=1)
+        left_hand_pose_params = lhand_output["mhr_hand"]["hand"][:, :54]
+        right_hand_pose_params = rhand_output["mhr_hand"]["hand"][:, 54:]
+        updated_hand_pose = torch.cat(
+            [left_hand_pose_params, right_hand_pose_params], dim=1
+        )
 
         # Drop in hand scales
-        updated_scale = pose_output['mhr']['scale'].clone()
-        updated_scale[:, 9] = lhand_output['mhr_hand']['scale'][:, 9]
-        updated_scale[:, 8] = rhand_output['mhr_hand']['scale'][:, 8]
-        updated_scale[:, 18:] = (lhand_output['mhr_hand']['scale'][:, 18:] + rhand_output['mhr_hand']['scale'][:, 18:]) / 2
+        updated_scale = pose_output["mhr"]["scale"].clone()
+        updated_scale[:, 9] = lhand_output["mhr_hand"]["scale"][:, 9]
+        updated_scale[:, 8] = rhand_output["mhr_hand"]["scale"][:, 8]
+        updated_scale[:, 18:] = (
+            lhand_output["mhr_hand"]["scale"][:, 18:]
+            + rhand_output["mhr_hand"]["scale"][:, 18:]
+        ) / 2
 
         # Update hand shape
-        updated_shape = pose_output['mhr']['shape'].clone()
-        updated_shape[:, 40:] = (lhand_output['mhr_hand']['shape'][:, 40:] + rhand_output['mhr_hand']['shape'][:, 40:]) / 2
+        updated_shape = pose_output["mhr"]["shape"].clone()
+        updated_shape[:, 40:] = (
+            lhand_output["mhr_hand"]["shape"][:, 40:]
+            + rhand_output["mhr_hand"]["shape"][:, 40:]
+        ) / 2
 
         ############################ Doing IK ############################
 
         # First, forward just FK
         joint_rotations = self.head_pose.mhr_forward(
-            global_trans=pose_output['mhr']['global_rot'] * 0,
-            global_rot=pose_output['mhr']['global_rot'],
-            body_pose_params=pose_output['mhr']['body_pose'],
+            global_trans=pose_output["mhr"]["global_rot"] * 0,
+            global_rot=pose_output["mhr"]["global_rot"],
+            body_pose_params=pose_output["mhr"]["body_pose"],
             hand_pose_params=updated_hand_pose,
             scale_params=updated_scale,
             shape_params=updated_shape,
-            expr_params=pose_output['mhr']['face'],
+            expr_params=pose_output["mhr"]["face"],
             return_joint_rotations=True,
         )[1]
 
         # Get lowarm
-        lowarm_joint_idxs = torch.LongTensor([76, 40]).cuda() # left, right
-        lowarm_joint_rotations = joint_rotations[:, lowarm_joint_idxs] # B x 2 x 3 x 3
+        lowarm_joint_idxs = torch.LongTensor([76, 40]).cuda()  # left, right
+        lowarm_joint_rotations = joint_rotations[:, lowarm_joint_idxs]  # B x 2 x 3 x 3
 
         # Get zero-wrist pose
-        wrist_twist_joint_idxs = torch.LongTensor([77, 41]).cuda() # left, right
-        wrist_zero_rot_pose = lowarm_joint_rotations @ self.head_pose.joint_rotation[wrist_twist_joint_idxs]
+        wrist_twist_joint_idxs = torch.LongTensor([77, 41]).cuda()  # left, right
+        wrist_zero_rot_pose = (
+            lowarm_joint_rotations
+            @ self.head_pose.joint_rotation[wrist_twist_joint_idxs]
+        )
 
         # Get globals from left & right
-        left_joint_global_rots = lhand_output['mhr_hand']['joint_global_rots']
-        right_joint_global_rots = rhand_output['mhr_hand']['joint_global_rots']
-        pred_global_wrist_rotmat = torch.stack([
-            left_joint_global_rots[:, 78],
-            right_joint_global_rots[:, 42],
-        ], dim=1)
+        left_joint_global_rots = lhand_output["mhr_hand"]["joint_global_rots"]
+        right_joint_global_rots = rhand_output["mhr_hand"]["joint_global_rots"]
+        pred_global_wrist_rotmat = torch.stack(
+            [
+                left_joint_global_rots[:, 78],
+                right_joint_global_rots[:, 42],
+            ],
+            dim=1,
+        )
 
         # Now we want to get the local poses that lead to the wrist being pred_global_wrist_rotmat
-        fused_local_wrist_rotmat = torch.einsum('kabc,kabd->kadc', pred_global_wrist_rotmat, wrist_zero_rot_pose)
-        wrist_xzy = fix_wrist_euler(roma.rotmat_to_euler("XZY", fused_local_wrist_rotmat))
+        fused_local_wrist_rotmat = torch.einsum(
+            "kabc,kabd->kadc", pred_global_wrist_rotmat, wrist_zero_rot_pose
+        )
+        wrist_xzy = fix_wrist_euler(
+            roma.rotmat_to_euler("XZY", fused_local_wrist_rotmat)
+        )
 
         # Put it in.
-        angle_difference = rotation_angle_difference(ori_local_wrist_rotmat, fused_local_wrist_rotmat) # B x 2 x 3 x3
+        angle_difference = rotation_angle_difference(
+            ori_local_wrist_rotmat, fused_local_wrist_rotmat
+        )  # B x 2 x 3 x3
         valid_angle = angle_difference < thresh_wrist_angle
         valid_angle = valid_angle & hand_valid_mask
         valid_angle = valid_angle.unsqueeze(-1)
 
-        body_pose = pose_output['mhr']['body_pose'][:, [41, 43, 42, 31, 33, 32]].unflatten(1, (2, 3))
+        body_pose = pose_output["mhr"]["body_pose"][
+            :, [41, 43, 42, 31, 33, 32]
+        ].unflatten(1, (2, 3))
         updated_body_pose = torch.where(valid_angle, wrist_xzy, body_pose)
-        pose_output['mhr']['body_pose'][:, [41, 43, 42, 31, 33, 32]] = updated_body_pose.flatten(1, 2)
+        pose_output["mhr"]["body_pose"][:, [41, 43, 42, 31, 33, 32]] = (
+            updated_body_pose.flatten(1, 2)
+        )
 
-        hand_pose = pose_output['mhr']['hand'].unflatten(1, (2, 54))
-        pose_output['mhr']['hand'] = torch.where(valid_angle, updated_hand_pose.unflatten(1, (2, 54)), hand_pose).flatten(1, 2)
+        hand_pose = pose_output["mhr"]["hand"].unflatten(1, (2, 54))
+        pose_output["mhr"]["hand"] = torch.where(
+            valid_angle, updated_hand_pose.unflatten(1, (2, 54)), hand_pose
+        ).flatten(1, 2)
 
-        hand_scale = torch.stack([pose_output['mhr']['scale'][:, 9], pose_output['mhr']['scale'][:, 8]], dim=1)
-        updated_hand_scale = torch.stack([updated_scale[:, 9], updated_scale[:, 8]], dim=1)
-        masked_hand_scale = torch.where(valid_angle.squeeze(-1), updated_hand_scale, hand_scale)
-        pose_output['mhr']['scale'][:, 9] = masked_hand_scale[:, 0]
-        pose_output['mhr']['scale'][:, 8] = masked_hand_scale[:, 1]
+        hand_scale = torch.stack(
+            [pose_output["mhr"]["scale"][:, 9], pose_output["mhr"]["scale"][:, 8]],
+            dim=1,
+        )
+        updated_hand_scale = torch.stack(
+            [updated_scale[:, 9], updated_scale[:, 8]], dim=1
+        )
+        masked_hand_scale = torch.where(
+            valid_angle.squeeze(-1), updated_hand_scale, hand_scale
+        )
+        pose_output["mhr"]["scale"][:, 9] = masked_hand_scale[:, 0]
+        pose_output["mhr"]["scale"][:, 8] = masked_hand_scale[:, 1]
 
         # Replace shared shape and scale
-        pose_output['mhr']['scale'][:, 18:] = torch.where(valid_angle.squeeze(-1).sum(dim=1, keepdim=True) > 0, (
-            lhand_output['mhr_hand']['scale'][:, 18:] * valid_angle.squeeze(-1)[:, [0]] + rhand_output['mhr_hand']['scale'][:, 18:] * valid_angle.squeeze(-1)[:, [1]]
-        ) / (valid_angle.squeeze(-1).sum(dim=1, keepdim=True) + 1e-8), pose_output['mhr']['scale'][:, 18:])
-        pose_output['mhr']['shape'][:, 40:] = torch.where(valid_angle.squeeze(-1).sum(dim=1, keepdim=True) > 0, (
-            lhand_output['mhr_hand']['shape'][:, 40:] * valid_angle.squeeze(-1)[:, [0]] + rhand_output['mhr_hand']['shape'][:, 40:] * valid_angle.squeeze(-1)[:, [1]]
-        ) / (valid_angle.squeeze(-1).sum(dim=1, keepdim=True) + 1e-8), pose_output['mhr']['shape'][:, 40:])
+        pose_output["mhr"]["scale"][:, 18:] = torch.where(
+            valid_angle.squeeze(-1).sum(dim=1, keepdim=True) > 0,
+            (
+                lhand_output["mhr_hand"]["scale"][:, 18:]
+                * valid_angle.squeeze(-1)[:, [0]]
+                + rhand_output["mhr_hand"]["scale"][:, 18:]
+                * valid_angle.squeeze(-1)[:, [1]]
+            )
+            / (valid_angle.squeeze(-1).sum(dim=1, keepdim=True) + 1e-8),
+            pose_output["mhr"]["scale"][:, 18:],
+        )
+        pose_output["mhr"]["shape"][:, 40:] = torch.where(
+            valid_angle.squeeze(-1).sum(dim=1, keepdim=True) > 0,
+            (
+                lhand_output["mhr_hand"]["shape"][:, 40:]
+                * valid_angle.squeeze(-1)[:, [0]]
+                + rhand_output["mhr_hand"]["shape"][:, 40:]
+                * valid_angle.squeeze(-1)[:, [1]]
+            )
+            / (valid_angle.squeeze(-1).sum(dim=1, keepdim=True) + 1e-8),
+            pose_output["mhr"]["shape"][:, 40:],
+        )
 
         ########################################################
 
         # Re-run forward
         with torch.no_grad():
-            verts, j3d, jcoords, mhr_model_params, joint_global_rots = self.head_pose.mhr_forward(
-                global_trans=pose_output['mhr']['global_rot'] * 0,
-                global_rot=pose_output['mhr']['global_rot'],
-                body_pose_params=pose_output['mhr']['body_pose'],
-                hand_pose_params=pose_output['mhr']['hand'],
-                scale_params=pose_output['mhr']['scale'],
-                shape_params=pose_output['mhr']['shape'],
-                expr_params=pose_output['mhr']['face'],
-                return_keypoints=True,
-                return_joint_coords=True,
-                return_model_params=True,
-                return_joint_rotations=True,
+            verts, j3d, jcoords, mhr_model_params, joint_global_rots = (
+                self.head_pose.mhr_forward(
+                    global_trans=pose_output["mhr"]["global_rot"] * 0,
+                    global_rot=pose_output["mhr"]["global_rot"],
+                    body_pose_params=pose_output["mhr"]["body_pose"],
+                    hand_pose_params=pose_output["mhr"]["hand"],
+                    scale_params=pose_output["mhr"]["scale"],
+                    shape_params=pose_output["mhr"]["shape"],
+                    expr_params=pose_output["mhr"]["face"],
+                    return_keypoints=True,
+                    return_joint_coords=True,
+                    return_model_params=True,
+                    return_joint_rotations=True,
+                )
             )
             j3d = j3d[:, :70]  # 308 --> 70 keypoints
             verts[..., [1, 2]] *= -1  # Camera system difference
             j3d[..., [1, 2]] *= -1  # Camera system difference
             jcoords[..., [1, 2]] *= -1
-            pose_output['mhr']['pred_keypoints_3d'] = j3d
-            pose_output['mhr']['pred_vertices'] = verts
-            pose_output['mhr']['pred_joint_coords'] = jcoords
-            pose_output['mhr']['pred_pose_raw'][...] = 0  # pred_pose_raw is not valid anymore
-            pose_output['mhr']['mhr_model_params'] = mhr_model_params
+            pose_output["mhr"]["pred_keypoints_3d"] = j3d
+            pose_output["mhr"]["pred_vertices"] = verts
+            pose_output["mhr"]["pred_joint_coords"] = jcoords
+            pose_output["mhr"]["pred_pose_raw"][
+                ...
+            ] = 0  # pred_pose_raw is not valid anymore
+            pose_output["mhr"]["mhr_model_params"] = mhr_model_params
 
         ########################################################
         # Project to 2D
         pred_keypoints_3d_proj = (
-            pose_output['mhr']['pred_keypoints_3d'] + pose_output['mhr']['pred_cam_t'][:, None, :]
+            pose_output["mhr"]["pred_keypoints_3d"]
+            + pose_output["mhr"]["pred_cam_t"][:, None, :]
         )
-        pred_keypoints_3d_proj[:, :, [0, 1]] *= pose_output['mhr']["focal_length"][:, None, None]
+        pred_keypoints_3d_proj[:, :, [0, 1]] *= pose_output["mhr"]["focal_length"][
+            :, None, None
+        ]
         pred_keypoints_3d_proj[:, :, [0, 1]] = (
             pred_keypoints_3d_proj[:, :, [0, 1]]
-            + torch.FloatTensor([width / 2, height / 2]).to(pred_keypoints_3d_proj)[None, None, :] * pred_keypoints_3d_proj[:, :, [2]]
+            + torch.FloatTensor([width / 2, height / 2]).to(pred_keypoints_3d_proj)[
+                None, None, :
+            ]
+            * pred_keypoints_3d_proj[:, :, [2]]
         )
         pred_keypoints_3d_proj[:, :, :2] = (
             pred_keypoints_3d_proj[:, :, :2] / pred_keypoints_3d_proj[:, :, [2]]
         )
-        pose_output['mhr']['pred_keypoints_2d'] = pred_keypoints_3d_proj[:, :, :2]
+        pose_output["mhr"]["pred_keypoints_2d"] = pred_keypoints_3d_proj[:, :, :2]
 
         return pose_output, batch_lhand, batch_rhand, lhand_output, rhand_output
 
@@ -1566,78 +1679,87 @@ class SAM3DBody(BaseModel):
             prev_estimate=prev_estimate,
             condition_info=condition_info,
             batch=batch,
-            full_output=None,
         )
         pose_output = pose_output[-1]
 
         output.update({"mhr": pose_output})
         return output, keypoint_prompt
 
-    def _get_hand_box(self, pose_output, batch, scale_factor=None):
-        # get the left and right hand boxes and images from the predictions
-        left_hand_joint_idx = torch.arange(42, 63)  # 21 joints
-        right_hand_joint_idx = torch.arange(21, 42)  # 21 joints
-        left_wrist_idx = 62
-        right_wrist_idx = 41
-
-        # Get hand crops
-        ## First, decode images
-        batch_size, num_person = batch["img"].shape[:2]
-        full_imgs = [
-            img.data for img in batch["img_ori"] for _ in range(num_person)
-        ]  # cv2.imdecode(np.frombuffer(img, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
-        full_imgs_hw = torch.LongTensor(
-            [img.shape[:2] for img in full_imgs]
-        ).numpy()
-
-        if scale_factor is None:
-            scale_factor = 1.6
-
-        ## Get hand 2d KPS
-        left_hand_kps_2d = pose_output["mhr"]["pred_keypoints_2d"][
-            :, left_hand_joint_idx
-        ]
-        right_hand_kps_2d = pose_output["mhr"]["pred_keypoints_2d"][
-            :, right_hand_joint_idx
-        ]
-
-        ## Get minmaxes (xy)
-        left_min = left_hand_kps_2d.amin(dim=1).cpu().long().numpy()
-        left_max = left_hand_kps_2d.amax(dim=1).cpu().long().numpy()
-        right_min = right_hand_kps_2d.amin(dim=1).cpu().long().numpy()
-        right_max = right_hand_kps_2d.amax(dim=1).cpu().long().numpy()
-        left_min[:, 0] = np.clip(left_min[:, 0], a_min=0, a_max=full_imgs_hw[:, 1])
-        left_min[:, 1] = np.clip(left_min[:, 1], a_min=0, a_max=full_imgs_hw[:, 0])
-        left_max[:, 0] = np.clip(left_max[:, 0], a_min=0, a_max=full_imgs_hw[:, 1])
-        left_max[:, 1] = np.clip(left_max[:, 1], a_min=0, a_max=full_imgs_hw[:, 0])
-        right_min[:, 0] = np.clip(
-            right_min[:, 0], a_min=0, a_max=full_imgs_hw[:, 1]
+    def _get_hand_box(self, pose_output, batch):
+        """Get hand bbox from the hand detector"""
+        pred_left_hand_box = (
+            pose_output["mhr"]["hand_box"][:, 0].detach().cpu().numpy()
+            * self.cfg.MODEL.IMAGE_SIZE[0]
         )
-        right_min[:, 1] = np.clip(
-            right_min[:, 1], a_min=0, a_max=full_imgs_hw[:, 0]
+        pred_right_hand_box = (
+            pose_output["mhr"]["hand_box"][:, 1].detach().cpu().numpy()
+            * self.cfg.MODEL.IMAGE_SIZE[0]
         )
-        right_max[:, 0] = np.clip(
-            right_max[:, 0], a_min=0, a_max=full_imgs_hw[:, 1]
-        )
-        right_max[:, 1] = np.clip(
-            right_max[:, 1], a_min=0, a_max=full_imgs_hw[:, 0]
-        )
-        ## Get center & scale
-        left_center = (left_max + left_min) / 2
-        right_center = (right_max + right_min) / 2
-        left_scale = (left_max - left_min) * scale_factor
-        right_scale = (right_max - right_min) * scale_factor
-        # Assumin square box is used
-        left_scale[...] = left_scale.max(axis=1)[:, None]
-        right_scale[...] = right_scale.max(axis=1)[:, None]
-        ## Stack
 
-        batch['left_scale'] = left_scale
-        batch['left_center'] = left_center
-        batch['right_scale'] = right_scale
-        batch['right_center'] = right_center
+        # Change boxes into squares
+        batch["left_center"] = pred_left_hand_box[:, :2]
+        batch["left_scale"] = (
+            pred_left_hand_box[:, 2:].max(axis=1, keepdims=True).repeat(2, axis=1)
+        )
+        batch["right_center"] = pred_right_hand_box[:, :2]
+        batch["right_scale"] = (
+            pred_right_hand_box[:, 2:].max(axis=1, keepdims=True).repeat(2, axis=1)
+        )
 
-        return batch
+        # Crop to full. batch["affine_trans"] is full-to-crop, right application
+        batch["left_scale"] = (
+            batch["left_scale"]
+            / batch["affine_trans"][0, :, 0, 0].cpu().numpy()[:, None]
+        )
+        batch["right_scale"] = (
+            batch["right_scale"]
+            / batch["affine_trans"][0, :, 0, 0].cpu().numpy()[:, None]
+        )
+        batch["left_center"] = (
+            batch["left_center"]
+            - batch["affine_trans"][0, :, [0, 1], [2, 2]].cpu().numpy()
+        ) / batch["affine_trans"][0, :, 0, 0].cpu().numpy()[:, None]
+        batch["right_center"] = (
+            batch["right_center"]
+            - batch["affine_trans"][0, :, [0, 1], [2, 2]].cpu().numpy()
+        ) / batch["affine_trans"][0, :, 0, 0].cpu().numpy()[:, None]
+
+        left_xyxy = np.concatenate(
+            [
+                (
+                    batch["left_center"][:, 0] - batch["left_scale"][:, 0] * 1 / 2
+                ).reshape(-1, 1),
+                (
+                    batch["left_center"][:, 1] - batch["left_scale"][:, 1] * 1 / 2
+                ).reshape(-1, 1),
+                (
+                    batch["left_center"][:, 0] + batch["left_scale"][:, 0] * 1 / 2
+                ).reshape(-1, 1),
+                (
+                    batch["left_center"][:, 1] + batch["left_scale"][:, 1] * 1 / 2
+                ).reshape(-1, 1),
+            ],
+            axis=1,
+        )
+        right_xyxy = np.concatenate(
+            [
+                (
+                    batch["right_center"][:, 0] - batch["right_scale"][:, 0] * 1 / 2
+                ).reshape(-1, 1),
+                (
+                    batch["right_center"][:, 1] - batch["right_scale"][:, 1] * 1 / 2
+                ).reshape(-1, 1),
+                (
+                    batch["right_center"][:, 0] + batch["right_scale"][:, 0] * 1 / 2
+                ).reshape(-1, 1),
+                (
+                    batch["right_center"][:, 1] + batch["right_scale"][:, 1] * 1 / 2
+                ).reshape(-1, 1),
+            ],
+            axis=1,
+        )
+
+        return left_xyxy, right_xyxy
 
     def keypoint_token_update_fn(
         self,
@@ -1684,10 +1806,9 @@ class SAM3DBody(BaseModel):
         )
 
         # Run them through the prompt encoder's pos emb function
-        token_augment[
-            :, kps_emb_start_idx : kps_emb_start_idx + num_keypoints, :
-        ] = self.keypoint_posemb_linear(pred_keypoints_2d_cropped) * (
-            ~invalid_mask[:, :, None]
+        token_augment[:, kps_emb_start_idx : kps_emb_start_idx + num_keypoints, :] = (
+            self.keypoint_posemb_linear(pred_keypoints_2d_cropped)
+            * (~invalid_mask[:, :, None])
         )
 
         # Also maybe update token_embeddings with the grid sampled 2D feature.
@@ -1713,9 +1834,7 @@ class SAM3DBody(BaseModel):
         pred_keypoints_2d_cropped_feats = (
             F.grid_sample(
                 image_embeddings,
-                pred_keypoints_2d_cropped_sample_points[
-                    :, :, None, :
-                ],  # -1 ~ 1, xy
+                pred_keypoints_2d_cropped_sample_points[:, :, None, :],  # -1 ~ 1, xy
                 mode="bilinear",
                 padding_mode="zeros",
                 align_corners=False,
@@ -1724,8 +1843,8 @@ class SAM3DBody(BaseModel):
             .permute(0, 2, 1)
         )  # B x kps x C
         # Zero out invalid locations...
-        pred_keypoints_2d_cropped_feats = (
-            pred_keypoints_2d_cropped_feats * (~invalid_mask[:, :, None])
+        pred_keypoints_2d_cropped_feats = pred_keypoints_2d_cropped_feats * (
+            ~invalid_mask[:, :, None]
         )
         # This is ADDING
         token_embeddings = token_embeddings.clone()
@@ -1822,10 +1941,9 @@ class SAM3DBody(BaseModel):
         )
 
         # Run them through the prompt encoder's pos emb function
-        token_augment[
-            :, kps_emb_start_idx : kps_emb_start_idx + num_keypoints, :
-        ] = self.keypoint_posemb_linear_hand(pred_keypoints_2d_cropped) * (
-            ~invalid_mask[:, :, None]
+        token_augment[:, kps_emb_start_idx : kps_emb_start_idx + num_keypoints, :] = (
+            self.keypoint_posemb_linear_hand(pred_keypoints_2d_cropped)
+            * (~invalid_mask[:, :, None])
         )
 
         # Also maybe update token_embeddings with the grid sampled 2D feature.
@@ -1851,9 +1969,7 @@ class SAM3DBody(BaseModel):
         pred_keypoints_2d_cropped_feats = (
             F.grid_sample(
                 image_embeddings,
-                pred_keypoints_2d_cropped_sample_points[
-                    :, :, None, :
-                ],  # -1 ~ 1, xy
+                pred_keypoints_2d_cropped_sample_points[:, :, None, :],  # -1 ~ 1, xy
                 mode="bilinear",
                 padding_mode="zeros",
                 align_corners=False,
@@ -1862,8 +1978,8 @@ class SAM3DBody(BaseModel):
             .permute(0, 2, 1)
         )  # B x kps x C
         # Zero out invalid locations...
-        pred_keypoints_2d_cropped_feats = (
-            pred_keypoints_2d_cropped_feats * (~invalid_mask[:, :, None])
+        pred_keypoints_2d_cropped_feats = pred_keypoints_2d_cropped_feats * (
+            ~invalid_mask[:, :, None]
         )
         # This is ADDING
         token_embeddings = token_embeddings.clone()

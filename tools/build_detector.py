@@ -1,9 +1,10 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
 
 import os
-import torch
-import numpy as np
 from pathlib import Path
+
+import numpy as np
+import torch
 
 
 class HumanDetector:
@@ -12,7 +13,7 @@ class HumanDetector:
 
         if name == "vitdet":
             print("########### Using human detector: ViTDet...")
-            self.detector = load_detectron2_vitdet()
+            self.detector = load_detectron2_vitdet(**kwargs)
             self.detector_func = run_detectron2_vitdet
 
             self.detector = self.detector.to(self.device)
@@ -23,16 +24,17 @@ class HumanDetector:
     def run_human_detection(self, img, **kwargs):
         return self.detector_func(self.detector, img, **kwargs)
 
-def load_detectron2_vitdet():
+
+def load_detectron2_vitdet(path=None):
     """
     Load vitdet detector similar to 4D-Humans demo.py approach.
     Checkpoint is automatically downloaded from the hardcoded URL.
     """
     from detectron2.checkpoint import DetectionCheckpointer
-    from detectron2.config import LazyConfig, instantiate
+    from detectron2.config import instantiate, LazyConfig
 
     # Get config file from tools directory (same folder as this file)
-    cfg_path = Path(__file__).parent / 'cascade_mask_rcnn_vitdet_h_75ep.py'
+    cfg_path = Path(__file__).parent / "cascade_mask_rcnn_vitdet_h_75ep.py"
     if not cfg_path.exists():
         raise FileNotFoundError(
             f"Config file not found at {cfg_path}. "
@@ -40,7 +42,11 @@ def load_detectron2_vitdet():
         )
 
     detectron2_cfg = LazyConfig.load(str(cfg_path))
-    detectron2_cfg.train.init_checkpoint = "https://dl.fbaipublicfiles.com/detectron2/ViTDet/COCO/cascade_mask_rcnn_vitdet_h/f328730692/model_final_f05665.pkl"
+    detectron2_cfg.train.init_checkpoint = (
+        "https://dl.fbaipublicfiles.com/detectron2/ViTDet/COCO/cascade_mask_rcnn_vitdet_h/f328730692/model_final_f05665.pkl"
+        if path is None
+        else os.path.join(path, "model_final_f05665.pkl")
+    )
     for i in range(3):
         detectron2_cfg.model.roi_heads.box_predictors[i].test_score_thresh = 0.25
     detector = instantiate(detectron2_cfg.model)
@@ -89,4 +95,3 @@ def run_detectron2_vitdet(
     )  # shape: [len(boxes),]
     boxes = boxes[sorted_indices]
     return boxes
-        
