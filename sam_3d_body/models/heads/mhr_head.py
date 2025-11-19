@@ -3,6 +3,7 @@ from typing import Optional
 import roma
 
 import os
+import warnings
 import torch
 import torch.nn as nn
 
@@ -17,79 +18,48 @@ from ..modules.mhr_utils import (
 
 from ..modules.transformer import FFN
 
+MOMENTUM_ENABLED = os.environ.get("MOMENTUM_ENABLED") is None
+try:
+    if MOMENTUM_ENABLED:
+        from mhr.mhr import MHR
+        MOMENTUM_ENABLED = True
+        warnings.warn("Momentum is enabled")
+    else:
+        warnings.warn("Momentum is not enabled")
+        raise ImportError
+except:
+    MOMENTUM_ENABLED = False
+    warnings.warn("Momentum is not enabled")
+
 class MHRHead(nn.Module):
 
     def __init__(
         self,
         input_dim: int,
         mlp_depth: int = 1,
-        drop_ratio: float = 0.0,
-        joint_rep_type: str = "cont",
-        num_body_joints: int = 77,
-        num_hand_shape_comps: int = 0,
-        num_shape_comps: int = 128,
-        num_scale_comps: int = 38,
-        num_hand_comps: int = 32,
-        num_face_comps: int = 72,
         mhr_model_path: str = "",
-        mesh_type: str = "lod3",
         extra_joint_regressor: str = "",
         smpl_model_path: str = "",
-        fix_kps_eye_and_chin: bool = True,
-        znorm_fullbody_scales: bool = True,
-        ffn_zero_bias: bool = False,
+        ffn_zero_bias: bool = True,
         mlp_channel_div_factor: int = 8,
-        enable_slim_keypoint_mapping: bool = False,
-        zero_face: bool = False,
-        zero_face_for_nonparam_losses: bool = False,
-        detach_face_for_nonparam_losses: bool = False,
-        pred_global_wrist_rot=False,
-        replace_local_with_pred_global_wrist_rot=False,
         enable_hand_model=False,
-        use_torchscript=True,
     ):
         super().__init__()
 
-        # Always use 6D representation for the 3D rotations
-        # "On the Continuity of Rotation Representations in Neural Networks"
-        self.joint_rep_type = joint_rep_type
-
-        # joint rotation + shape + camera
-        # self.num_body_joints = num_body_joints
-        self.num_hand_shape_comps = num_hand_shape_comps
-        self.num_shape_comps = num_shape_comps
-        self.num_scale_comps = num_scale_comps
-        self.num_hand_comps = num_hand_comps
-        self.num_face_comps = num_face_comps
-        self.pred_global_wrist_rot = pred_global_wrist_rot
-        self.replace_local_with_pred_global_wrist_rot = (
-            replace_local_with_pred_global_wrist_rot
-        )
+        self.num_shape_comps = 45
+        self.num_scale_comps = 28
+        self.num_hand_comps = 54
+        self.num_face_comps = 72
         self.enable_hand_model = enable_hand_model
-
-        self.zero_face = zero_face
-        self.zero_face_for_nonparam_losses = zero_face_for_nonparam_losses
-        self.detach_face_for_nonparam_losses = detach_face_for_nonparam_losses
-        assert (
-            sum(
-                [
-                    self.zero_face,
-                    self.zero_face_for_nonparam_losses,
-                    self.detach_face_for_nonparam_losses,
-                ]
-            )
-            <= 1
-        )
 
         self.body_cont_dim = 260
         self.npose = (
             6  # Global Rotation
             + self.body_cont_dim  # then body
-            + num_shape_comps
-            + num_scale_comps
-            + num_hand_comps * 2
-            + num_face_comps
-            + (0 if not self.pred_global_wrist_rot else 12)
+            + self.num_shape_comps
+            + self.num_scale_comps
+            + self.num_hand_comps * 2
+            + self.num_face_comps
         )
 
         self.proj = FFN(
@@ -97,40 +67,38 @@ class MHRHead(nn.Module):
             feedforward_channels=input_dim // mlp_channel_div_factor,
             output_dims=self.npose,
             num_fcs=mlp_depth,
-            ffn_drop=drop_ratio,
+            ffn_drop=0.0,
             add_identity=False,
         )
 
         if ffn_zero_bias:
             torch.nn.init.zeros_(self.proj.layers[-2].bias)
 
-        self.mesh_type = mesh_type
-
-        # Load scale & hand stuff for HMR
+        # MHR Parameters
         self.model_data_dir = mhr_model_path
-        self.num_hand_scale_comps = num_scale_comps - 18
-        self.num_hand_pose_comps = num_hand_comps
-        model_dict = load_pickle(os.path.join(mhr_model_path, "params.pkl"))
-        self.joint_rotation = nn.Parameter(model_dict['joint_rotation'], requires_grad=False)
-        self.scale_mean = nn.Parameter(model_dict['scale_mean'], requires_grad=False)
-        self.scale_comps = nn.Parameter(model_dict['scale_comps'][:18 + self.num_hand_scale_comps], requires_grad=False)
-        self.faces = nn.Parameter(model_dict['faces']["lod1"], requires_grad=False)
-        self.hand_pose_mean = nn.Parameter(model_dict['hand_prior_dict']['hand_pose_mean'], requires_grad=False)
-        self.hand_pose_comps = nn.Parameter(model_dict['hand_prior_dict']['hand_pose_comps'][:self.num_hand_pose_comps], requires_grad=False)
-        self.hand_joint_idxs_left = model_dict['hand_prior_dict']['hand_joint_idxs_left']
-        self.hand_joint_idxs_right = model_dict['hand_prior_dict']['hand_joint_idxs_right']
-        # Load Keypoint Mapping
-        self.keypoint_mapping = nn.Parameter(model_dict['keypoint_mapping_dict']['keypoint_mapping'], requires_grad=False)
-        self.general_expression_skeleton_kps_dict = model_dict['keypoint_mapping_dict']['general_expression_skeleton_kps_dict']
-        self.keypoint_names_308 = model_dict['keypoint_mapping_dict']['keypoint_names_308']
+        self.num_hand_scale_comps = self.num_scale_comps - 18
+        self.num_hand_pose_comps = self.num_hand_comps
+        
+        # Buffers to be filled in by model state dict
+        self.joint_rotation = nn.Parameter(torch.zeros(127, 3, 3), requires_grad=False)
+        self.scale_mean = nn.Parameter(torch.zeros(68), requires_grad=False)
+        self.scale_comps = nn.Parameter(torch.zeros(28, 68), requires_grad=False)
+        self.faces = nn.Parameter(torch.zeros(36874, 3).long(), requires_grad=False)
+        self.hand_pose_mean = nn.Parameter(torch.zeros(54), requires_grad=False)
+        self.hand_pose_comps = nn.Parameter(torch.eye(54), requires_grad=False)
+        self.hand_joint_idxs_left = nn.Parameter(torch.zeros(27).long(), requires_grad=False)
+        self.hand_joint_idxs_right = nn.Parameter(torch.zeros(27).long(), requires_grad=False)
+        self.keypoint_mapping = nn.Parameter(torch.zeros(308, 18439 + 127), requires_grad=False)
+        # Some special buffers for the hand-version
+        self.right_wrist_coords = nn.Parameter(torch.zeros(3), requires_grad=False)
+        self.root_coords = nn.Parameter(torch.zeros(3), requires_grad=False)
+        self.local_to_world_wrist = nn.Parameter(torch.zeros(3, 3), requires_grad=False)
+        self.nonhand_param_idxs = nn.Parameter(torch.zeros(145).long(), requires_grad=False)
 
         # Load MHR itself
-        self.use_torchscript = use_torchscript
-        if self.use_torchscript:
-            self.mhr = torch.jit.load(os.path.join(mhr_model_path, "mhr_ts.pt"), map_location=('cuda' if torch.cuda.is_available() else 'cpu'))
+        if not MOMENTUM_ENABLED:
+            self.mhr = torch.jit.load(mhr_model_path, map_location=('cuda' if torch.cuda.is_available() else 'cpu'))
         else:
-            # TODO: need to be updated
-            from MHR.mhr.mhr import MHR
             self.mhr = MHR.from_files(device=torch.device('cuda' if torch.cuda.is_available() else 'cpu'), lod=1)
 
         for param in self.mhr.parameters():
@@ -149,8 +117,6 @@ class MHRHead(nn.Module):
             ],
             dim=0,
         )
-        if self.pred_global_wrist_rot:
-            weights[:, -12:] = torch.FloatTensor([1, 0, 0, 0, 1, 0, 1, 0, 0, 0, 1, 0])
         return weights
 
     def replace_hands_in_pose(self, full_pose_params, hand_pose_params):
@@ -187,26 +153,17 @@ class MHRHead(nn.Module):
         return_joint_coords=False,
         return_model_params=False,
         return_joint_rotations=False,
-        return_joint_params=False,
         scale_offsets=None,
         vertex_offsets=None):
 
         if self.enable_hand_model:
-            # Need to do some stuff to transfer hand coordinates to body
-            right_wrist_coords = torch.FloatTensor([-0.539864182472229, 1.1133134365081787, 0.1318483203649521]).cuda()
-            root_coords = torch.FloatTensor([0.0, 0.9239869713783264, 0.0]).cuda()
-            local_to_world_wrist = torch.FloatTensor([
-                [0.6428927779197693, 0.4922248423099518, -0.5868593454360962],
-                [-0.6405355930328369, 0.7656170129776001, -0.059537410736083984],
-                [0.4200035333633423, 0.4141804277896881, 0.8074971437454224]]).cuda()
-
+            # Need to do some operations to transfer wrist-centric predictions to the body.
             global_rot_ori = global_rot.clone()
             global_trans_ori = global_trans.clone()
-            global_rot = roma.rotmat_to_euler('xyz', roma.euler_to_rotmat('xyz', global_rot_ori) @ local_to_world_wrist)
-            global_trans = -(roma.euler_to_rotmat('xyz', global_rot) @ (right_wrist_coords - root_coords) + root_coords) + global_trans_ori
+            global_rot = roma.rotmat_to_euler('xyz', roma.euler_to_rotmat('xyz', global_rot_ori) @ self.local_to_world_wrist)
+            global_trans = -(roma.euler_to_rotmat('xyz', global_rot) @ (self.right_wrist_coords - self.root_coords) + self.root_coords) + global_trans_ori
         
-        if body_pose_params.shape[-1] == 133:
-            body_pose_params = body_pose_params[..., :130]
+        body_pose_params = body_pose_params[..., :130]
 
         # Convert from scale and shape params to actual scales and vertices
         ## Add singleton batches in case...
@@ -221,7 +178,6 @@ class MHRHead(nn.Module):
 
         # Now, figure out the pose.
         ## 10 here is because it's more stable to optimize global translation in meters.
-        ## LBS works in cm (global_scale is [1, 1, 1]).
         full_pose_params = torch.cat([global_trans * 10, global_rot, body_pose_params], dim=1) # B x 127
         ## Put in hands
         if hand_pose_params is not None:
@@ -229,15 +185,13 @@ class MHRHead(nn.Module):
         model_params = torch.cat([full_pose_params, scales], dim=1)
 
         if self.enable_hand_model:
-            nonhand_param_idxs = [6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,95,96,97,98,99,100,101,102,103,104,105,106,107,108,109,110,111,112,113,114,115,116,117,118,119,120,121,122,123,124,125,126,127,128,129,130,131,132,133,134,135,136,137,138,139,140,141,142,143,145,146,147,148,149,150,151,152,153,179,180,181,182,183,184,185,186,187,188,189,190,191,192,193,194,195,196,197,198,199,200,201,202,203]
-            model_params[:, nonhand_param_idxs] = 0
+            # Zero out non-hand parameters
+            model_params[:, self.nonhand_param_idxs] = 0
 
-        if self.use_torchscript:
+        if not MOMENTUM_ENABLED:
             curr_skinned_verts, joint_params, curr_skel_state = self.mhr(shape_params, model_params, expr_params)
         else:
-            curr_skinned_verts = self.mhr(shape_params, model_params, expr_params)
-            joint_params = self.mhr.character_torch.model_parameters_to_joint_parameters(model_params)
-            curr_skel_state = self.mhr.character_torch.joint_parameters_to_skeleton_state(joint_params)
+            curr_skinned_verts, curr_skel_state = self.mhr(shape_params, model_params, expr_params)
         curr_joint_coords, curr_joint_quats, _ = torch.split(curr_skel_state, [3, 4, 1], dim=2)
         curr_skinned_verts = curr_skinned_verts / 100
         curr_joint_coords = curr_joint_coords / 100
@@ -251,18 +205,9 @@ class MHRHead(nn.Module):
             model_keypoints_pred = (self.keypoint_mapping @ model_vert_joints.permute(1, 0, 2).flatten(1, 2)).reshape(-1, model_vert_joints.shape[0], 3).permute(1, 0, 2)
 
             if self.enable_hand_model:
-                hand_zero_kps = [ 0,  1,  2,  3,  4,  7,  8, 13, 14, 15, 16, 17, 18, 19, 20, 63, 64, 65, 66, 67, 68]
-                to_fix_kps = [5,6,9,10,11,12,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,69]
-                model_keypoints_pred[:, hand_zero_kps] = 0
-                model_keypoints_pred[:, to_fix_kps] = 0
-                # Wrist too
-                model_keypoints_pred[:, 42] = 0
-
-                # model_keypoints_pred[:, to_fix_kps] = (
-                #     roma.euler_to_rotmat('xyz', global_rot_ori)[:, None, :, :]
-                #     @ roma.euler_to_rotmat('xyz', global_rot).permute(0, 2, 1)[:, None, :, :]
-                #     @ (model_keypoints_pred[:, to_fix_kps, :] - global_trans[:, None, :] - root_coords)[:, :, :, None]
-                #     + global_trans_ori[:, None, :, None]).squeeze(3)
+                # Zero out everything except for the right hand
+                model_keypoints_pred[:, :21] = 0
+                model_keypoints_pred[:, 42:] = 0
 
             to_return = to_return + [model_keypoints_pred]
         if return_joint_coords:
@@ -271,8 +216,6 @@ class MHRHead(nn.Module):
             to_return = to_return + [model_params]
         if return_joint_rotations:
             to_return = to_return + [curr_joint_rots]
-        if return_joint_params:
-            to_return = to_return + [joint_params.unflatten(1, (-1, 7))]
 
         if isinstance(to_return, list) and len(to_return) == 1:
             return to_return[0]
@@ -326,26 +269,8 @@ class MHRHead(nn.Module):
         count += self.num_scale_comps
         pred_hand = pred[:, count : count + self.num_hand_comps * 2]
         count += self.num_hand_comps * 2
-        pred_face = pred[:, count : count + self.num_face_comps]
+        pred_face = pred[:, count : count + self.num_face_comps] * 0
         count += self.num_face_comps
-        if self.pred_global_wrist_rot:
-            pred_global_wrist_raw = pred[:, count : count + 12]
-            pred_global_wrist_rotmat = rot6d_to_rotmat(
-                pred_global_wrist_raw.unflatten(1, (-1, 6)).flatten(0, 1)
-            ).unflatten(0, (-1, 2))
-            count += 12
-        else:
-            pred_global_wrist_raw = None
-            pred_global_wrist_rotmat = None
-
-        if self.zero_face:
-            pred_face = pred_face * 0
-
-        pred_face_for_forward = pred_face.clone()
-        if self.zero_face_for_nonparam_losses:
-            pred_face_for_forward = pred_face_for_forward * 0
-        if self.detach_face_for_nonparam_losses:
-            pred_face_for_forward = pred_face_for_forward.detach()
 
         # Run everything through mhr
         output = self.mhr_forward(
@@ -355,16 +280,16 @@ class MHRHead(nn.Module):
             hand_pose_params=pred_hand,
             scale_params=pred_scale,
             shape_params=pred_shape,
-            expr_params=pred_face_for_forward,
+            expr_params=pred_face,
             do_pcblend=do_pcblend,
-            return_keypoints=(self.mesh_type in ["lod3", "smpl"]),
-            return_joint_coords=self.mesh_type == "lod3",
-            return_joint_rotations=self.mesh_type == "lod3",
-            return_joint_params=self.mesh_type == "lod3",
+            return_keypoints=True,
+            return_joint_coords=True,
+            return_model_params=True,
+            return_joint_rotations=True,
         )
 
         # Some existing code to get joints and fix camera system
-        verts, j3d, jcoords, joint_global_rots, joint_params = output
+        verts, j3d, jcoords, mhr_model_params, joint_global_rots = output
         j3d = j3d[:, :70]  # 308 --> 70 keypoints
 
         if verts is not None:
@@ -394,9 +319,7 @@ class MHRHead(nn.Module):
             ),
             "faces": self.faces.cpu().numpy(),
             "joint_global_rots": joint_global_rots,
-            "joint_params": joint_params,
-            "pred_global_wrist_rotmat": pred_global_wrist_rotmat,
-            "pred_global_wrist_raw": pred_global_wrist_raw,
+            "mhr_model_params": mhr_model_params,
         }
 
         return output

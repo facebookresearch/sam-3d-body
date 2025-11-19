@@ -22,8 +22,7 @@ def load_sam_3d_body(checkpoint_path: str = "", device: str = "cuda", mhr_path: 
     # Disable face for inference
     model_cfg.defrost()
     # TODO: fix ALTAS
-    model_cfg.MODEL.ATLAS_HEAD.ZERO_FACE = True
-    model_cfg.MODEL.ATLAS_HEAD.ATLAS_MODEL_PATH = mhr_path
+    model_cfg.MODEL.MHR_HEAD.MHR_MODEL_PATH = mhr_path
     model_cfg.freeze()
 
     # Initialze the model

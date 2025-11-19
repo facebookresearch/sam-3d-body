@@ -1,9 +1,9 @@
-"""The first 70 of 308 ATLAS keypoints, ignoring the rest for face keypoints"""
+"""The first 70 of 308 MHR keypoints, ignoring the rest for face keypoints"""
 
-atlas_names = ['nose', 'left-eye', 'right-eye', 'left-ear', 'right-ear', 'left-shoulder', 'right-shoulder', 'left-elbow', 'right-elbow', 'left-hip', 'right-hip', 'left-knee', 'right-knee', 'left-ankle', 'right-ankle', 'left-big-toe-tip', 'left-small-toe-tip', 'left-heel', 'right-big-toe-tip', 'right-small-toe-tip', 'right-heel', 'right-thumb-tip', 'right-thumb-first-joint', 'right-thumb-second-joint', 'right-thumb-third-joint', 'right-index-tip', 'right-index-first-joint', 'right-index-second-joint', 'right-index-third-joint', 'right-middle-tip', 'right-middle-first-joint', 'right-middle-second-joint', 'right-middle-third-joint', 'right-ring-tip', 'right-ring-first-joint', 'right-ring-second-joint', 'right-ring-third-joint', 'right-pinky-tip', 'right-pinky-first-joint', 'right-pinky-second-joint', 'right-pinky-third-joint', 'right-wrist', 'left-thumb-tip', 'left-thumb-first-joint', 'left-thumb-second-joint', 'left-thumb-third-joint', 'left-index-tip', 'left-index-first-joint', 'left-index-second-joint', 'left-index-third-joint', 'left-middle-tip', 'left-middle-first-joint', 'left-middle-second-joint', 'left-middle-third-joint', 'left-ring-tip', 'left-ring-first-joint', 'left-ring-second-joint', 'left-ring-third-joint', 'left-pinky-tip', 'left-pinky-first-joint', 'left-pinky-second-joint', 'left-pinky-third-joint', 'left-wrist', 'left-olecranon', 'right-olecranon', 'left-cubital-fossa', 'right-cubital-fossa', 'left-acromion', 'right-acromion', 'neck']
+mhr_names = ['nose', 'left-eye', 'right-eye', 'left-ear', 'right-ear', 'left-shoulder', 'right-shoulder', 'left-elbow', 'right-elbow', 'left-hip', 'right-hip', 'left-knee', 'right-knee', 'left-ankle', 'right-ankle', 'left-big-toe-tip', 'left-small-toe-tip', 'left-heel', 'right-big-toe-tip', 'right-small-toe-tip', 'right-heel', 'right-thumb-tip', 'right-thumb-first-joint', 'right-thumb-second-joint', 'right-thumb-third-joint', 'right-index-tip', 'right-index-first-joint', 'right-index-second-joint', 'right-index-third-joint', 'right-middle-tip', 'right-middle-first-joint', 'right-middle-second-joint', 'right-middle-third-joint', 'right-ring-tip', 'right-ring-first-joint', 'right-ring-second-joint', 'right-ring-third-joint', 'right-pinky-tip', 'right-pinky-first-joint', 'right-pinky-second-joint', 'right-pinky-third-joint', 'right-wrist', 'left-thumb-tip', 'left-thumb-first-joint', 'left-thumb-second-joint', 'left-thumb-third-joint', 'left-index-tip', 'left-index-first-joint', 'left-index-second-joint', 'left-index-third-joint', 'left-middle-tip', 'left-middle-first-joint', 'left-middle-second-joint', 'left-middle-third-joint', 'left-ring-tip', 'left-ring-first-joint', 'left-ring-second-joint', 'left-ring-third-joint', 'left-pinky-tip', 'left-pinky-first-joint', 'left-pinky-second-joint', 'left-pinky-third-joint', 'left-wrist', 'left-olecranon', 'right-olecranon', 'left-cubital-fossa', 'right-cubital-fossa', 'left-acromion', 'right-acromion', 'neck']
 
 pose_info = dict(
-    pose_format='atlas70',
+    pose_format='mhr70',
     paper_info=dict(
         author='',
         year='',
@@ -499,24 +499,3 @@ pose_info = dict(
     ],
     sigmas=[],
 )
-
-
-if __name__ == "__main__":
-    from openpose import pose_info as openpose_pose_info
-
-    openpose_names = [openpose_pose_info['keypoint_info'][idx]['name'] for idx in range(25)]
-    atlas_names = [name.replace("-", "_") for name in atlas_names]
-    mapping = []
-    for i, name in enumerate(openpose_names):
-        if name not in atlas_names:
-            if "toe" in name:
-                name += "_tip"
-            else:
-                continue
-        mapping.append(f"{i}: {atlas_names.index(name)},")
-    print(len(mapping))
-    print(' '.join(mapping))
-
-    name2idx_mapping = {val['name']: idx for idx, val in pose_info['keypoint_info'].items()}
-    flip_mapping = [(name2idx_mapping[val['swap']] if len(val['swap']) else idx) for idx, val in pose_info['keypoint_info'].items()]
-    print(flip_mapping)

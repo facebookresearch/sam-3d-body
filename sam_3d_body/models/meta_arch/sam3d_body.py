@@ -25,7 +25,7 @@ logger = get_pylogger(__name__)
 
 # fmt: off
 PROMPT_KEYPOINTS = {  # keypoint_idx: prompt_idx
-    "atlas70": {
+    "mhr70": {
         i: i for i in range(70)
     },  # all 70 keypoints are supported for prompting
 }
@@ -185,15 +185,6 @@ class SAM3DBody(BaseModel):
             self.bbox_embed = MLP(
                 self.cfg.MODEL.DECODER.DIM, self.cfg.MODEL.DECODER.DIM, 4, 3
             )
-
-            if self.cfg.MODEL.DECODER.get("HAND_DETECT_DO_UNCERT", False):
-                self.hand_box_logsigma_embed = FFN(
-                    embed_dims=self.cfg.MODEL.DECODER.DIM,
-                    feedforward_channels=self.cfg.MODEL.DECODER.DIM,
-                    output_dims=1,
-                    num_fcs=2,
-                    add_identity=False,
-                )
 
         self.keypoint_posemb_linear = FFN(
             embed_dims=2,
@@ -373,10 +364,9 @@ class SAM3DBody(BaseModel):
                     image_embeddings.shape[-2:]
                 )  # (1, C, H, W)
 
-            if self.cfg.MODEL.get("RAY_CONDITION_TYPE", None) == "decoder_v3":
-                image_embeddings = self.ray_cond_emb(
-                    image_embeddings, batch["ray_cond"]
-                )
+            image_embeddings = self.ray_cond_emb(
+                image_embeddings, batch["ray_cond"]
+            )
 
             # To start, keypoints is all [0, 0, -2]. The points get sent into self.pe_layer._pe_encoding,
             # the labels determine the embedding weight (special one for -2, -1, then each of joint.)
@@ -473,25 +463,8 @@ class SAM3DBody(BaseModel):
             # Get the pose token
             pose_token = tokens[:, 0]
 
-            # Pose & camera are done residually.
-            if (
-                self.cfg.MODEL.DECODER.get("DO_INTERM_RESIDUAL_PRED", False)
-                and prev_pose_output is not None
-            ):
-                prev_pose = torch.cat(
-                    [
-                        prev_pose_output["pred_pose_raw"],
-                        prev_pose_output["shape"],
-                        prev_pose_output["scale"],
-                        prev_pose_output["hand"],
-                        prev_pose_output["face"],
-                    ],
-                    dim=1,
-                ).clone()
-                prev_camera = prev_pose_output["pred_cam"].clone()
-            else:
-                prev_pose = init_pose.view(batch_size, -1)
-                prev_camera = init_camera.view(batch_size, -1)
+            prev_pose = init_pose.view(batch_size, -1)
+            prev_camera = init_camera.view(batch_size, -1)
 
             # Get pose outputs
             pose_output = self.head_pose(pose_token, prev_pose)
@@ -522,10 +495,7 @@ class SAM3DBody(BaseModel):
             kp_token_update_fn = None
 
         # Now for 3D
-        if self.cfg.MODEL.DECODER.get("KEYPOINT3D_TOKEN_UPDATE", None) in ["v1"]:
-            kp3d_token_update_fn = self.keypoint3d_token_update_fn
-        else:
-            kp3d_token_update_fn = None
+        kp3d_token_update_fn = self.keypoint3d_token_update_fn
 
         # Combine the 2D and 3D functionse
         def keypoint_token_update_fn_comb(*args):
@@ -640,10 +610,9 @@ class SAM3DBody(BaseModel):
                     0
                 )  # (1, C, H, W)
 
-            if self.cfg.MODEL.get("RAY_CONDITION_TYPE", None) == "decoder_v3":
-                image_embeddings = self.ray_cond_emb_hand(
-                    image_embeddings, batch["ray_cond_hand"]
-                )
+            image_embeddings = self.ray_cond_emb_hand(
+                image_embeddings, batch["ray_cond_hand"]
+            )
 
             # To start, keypoints is all [0, 0, -2]. The points get sent into self.pe_layer._pe_encoding,
             # the labels determine the embedding weight (special one for -2, -1, then each of joint.)
@@ -743,26 +712,8 @@ class SAM3DBody(BaseModel):
             # Get the pose token
             pose_token = tokens[:, 0]
 
-            # Pose & camera are done residually. Optionally, we may choose to make their predictions
-            # residual through the decoder layers.
-            if (
-                self.cfg.MODEL.DECODER.get("DO_INTERM_RESIDUAL_PRED", False)
-                and prev_pose_output is not None
-            ):
-                prev_pose = torch.cat(
-                    [
-                        prev_pose_output["pred_pose_raw"],
-                        prev_pose_output["shape"],
-                        prev_pose_output["scale"],
-                        prev_pose_output["hand"],
-                        prev_pose_output["face"],
-                    ],
-                    dim=1,
-                ).clone()
-                prev_camera = prev_pose_output["pred_cam"].clone()
-            else:
-                prev_pose = init_pose.view(batch_size, -1)
-                prev_camera = init_camera.view(batch_size, -1)
+            prev_pose = init_pose.view(batch_size, -1)
+            prev_camera = init_camera.view(batch_size, -1)
 
             # Get pose outputs
             pose_output = self.head_pose_hand(pose_token, prev_pose)
@@ -793,10 +744,7 @@ class SAM3DBody(BaseModel):
             kp_token_update_fn = None
 
         # Now for 3D
-        if self.cfg.MODEL.DECODER.get("KEYPOINT3D_TOKEN_UPDATE", None) in ["v1"]:
-            kp3d_token_update_fn = self.keypoint3d_token_update_fn_hand
-        else:
-            kp3d_token_update_fn = None
+        kp3d_token_update_fn = self.keypoint3d_token_update_fn_hand
 
         # Combine the 2D and 3D functionse
         def keypoint_token_update_fn_comb(*args):
@@ -959,18 +907,6 @@ class SAM3DBody(BaseModel):
                 full_output=None,
             )
             pose_output = pose_output[-1]
-
-        if len(self.hand_batch_idx) and self.cfg.MODEL.DO_HAND_PROMPT:
-            tokens_output_hand, pose_output_hand = self.forward_decoder_hand(
-                image_embeddings[self.hand_batch_idx],
-                init_estimate=None,  # not recurring previous estimate
-                keypoints=cur_keypoint_prompt[self.hand_batch_idx],
-                prev_estimate=all_prev_estimate[self.hand_batch_idx],
-                condition_info=condition_info[self.hand_batch_idx],
-                batch=batch,
-                full_output=None,
-            )
-            pose_output_hand = pose_output_hand[-1]
 
         # Update prediction output
         output.update(
@@ -1174,31 +1110,28 @@ class SAM3DBody(BaseModel):
         )
 
         # Optionally get ray conditioining
-        if self.cfg.MODEL.get("RAY_CONDITION_TYPE", None) is not None:
-            ray_cond = self.get_ray_condition(
-                batch
-            )  # This is B x num_person x 2 x H x W
-            ray_cond = self._flatten_person(ray_cond)
-            if self.cfg.MODEL.BACKBONE.TYPE in [
-                "vit_hmr",
-                "hmr2",
-                "vit",
-                "vit_b",
-                "vit_l",
-            ]:
-                ray_cond = ray_cond[:, :, :, 32:-32]
-            elif self.cfg.MODEL.BACKBONE.TYPE in [
-                "vit_hmr_512_384",
-            ]:
-                ray_cond = ray_cond[:, :, :, 64:-64]
+        ray_cond = self.get_ray_condition(
+            batch
+        )  # This is B x num_person x 2 x H x W
+        ray_cond = self._flatten_person(ray_cond)
+        if self.cfg.MODEL.BACKBONE.TYPE in [
+            "vit_hmr",
+            "hmr2",
+            "vit",
+            "vit_b",
+            "vit_l",
+        ]:
+            ray_cond = ray_cond[:, :, :, 32:-32]
+        elif self.cfg.MODEL.BACKBONE.TYPE in [
+            "vit_hmr_512_384",
+        ]:
+            ray_cond = ray_cond[:, :, :, 64:-64]
 
-            if len(self.body_batch_idx):
-                batch["ray_cond"] = ray_cond[self.body_batch_idx].clone()
-            if len(self.hand_batch_idx):
-                batch["ray_cond_hand"] = ray_cond[self.hand_batch_idx].clone()
-            ray_cond = None
-        else:
-            ray_cond = None
+        if len(self.body_batch_idx):
+            batch["ray_cond"] = ray_cond[self.body_batch_idx].clone()
+        if len(self.hand_batch_idx):
+            batch["ray_cond_hand"] = ray_cond[self.hand_batch_idx].clone()
+        ray_cond = None
 
         image_embeddings = self.backbone(
             x.type(self.backbone_dtype), extra_embed=ray_cond
@@ -1267,9 +1200,6 @@ class SAM3DBody(BaseModel):
 
                 output["mhr"]["hand_box"] = hand_coords
                 output["mhr"]["hand_logits"] = hand_logits
-                if self.cfg.MODEL.DECODER.get("HAND_DETECT_DO_UNCERT", False):
-                    pred_hand_box_logsigma = self.hand_box_logsigma_embed(output_hand_box_tokens)
-                    output["mhr"]["pred_hand_box_logsigma"] = pred_hand_box_logsigma
 
             if len(self.hand_batch_idx):
                 output_hand_box_tokens_hand_batch = tokens_output_hand
@@ -1281,9 +1211,6 @@ class SAM3DBody(BaseModel):
 
                 output["mhr_hand"]["hand_box"] = hand_coords_hand_batch
                 output["mhr_hand"]["hand_logits"] = hand_logits_hand_batch
-                if self.cfg.MODEL.DECODER.get("HAND_DETECT_DO_UNCERT", False):
-                    pred_hand_box_logsigma_hand_batch = self.hand_box_logsigma_embed(output_hand_box_tokens_hand_batch)
-                    output["mhr_hand"]["pred_hand_box_logsigma"] = pred_hand_box_logsigma_hand_batch
 
         return output
 
@@ -1543,7 +1470,7 @@ class SAM3DBody(BaseModel):
             
         # Re-run forward
         with torch.no_grad():
-            verts, j3d, jcoords, joint_global_rots, joint_params = self.head_pose.mhr_forward(
+            verts, j3d, jcoords, mhr_model_params, joint_global_rots = self.head_pose.mhr_forward(
                 global_trans=pose_output['mhr']['global_rot'] * 0,
                 global_rot=pose_output['mhr']['global_rot'],
                 body_pose_params=pose_output['mhr']['body_pose'],
@@ -1553,8 +1480,8 @@ class SAM3DBody(BaseModel):
                 expr_params=pose_output['mhr']['face'],
                 return_keypoints=True,
                 return_joint_coords=True,
+                return_model_params=True,
                 return_joint_rotations=True,
-                return_joint_params=True,
             )
             j3d = j3d[:, :70]  # 308 --> 70 keypoints
             verts[..., [1, 2]] *= -1  # Camera system difference
@@ -1564,6 +1491,7 @@ class SAM3DBody(BaseModel):
             pose_output['mhr']['pred_vertices'] = verts
             pose_output['mhr']['pred_joint_coords'] = jcoords
             pose_output['mhr']['pred_pose_raw'][...] = 0  # pred_pose_raw is not valid anymore
+            pose_output['mhr']['mhr_model_params'] = mhr_model_params
         
         return pose_output, batch_lhand, batch_rhand, lhand_output, rhand_output
     

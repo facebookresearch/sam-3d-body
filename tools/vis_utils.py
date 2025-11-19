@@ -2,12 +2,12 @@ import numpy as np
 import cv2
 from sam_3d_body.visualization.renderer import Renderer
 from sam_3d_body.visualization.skeleton_visualizer import SkeletonVisualizer
-from sam_3d_body.metadata.atlas70 import pose_info as atlas70_pose_info
+from sam_3d_body.metadata.mhr70 import pose_info as mhr70_pose_info
 
 LIGHT_BLUE = (0.65098039, 0.74117647, 0.85882353)
 
 visualizer = SkeletonVisualizer(line_width=2, radius=5)
-visualizer.set_pose_meta(atlas70_pose_info)
+visualizer.set_pose_meta(mhr70_pose_info)
 
 
 def visualize_sample(img_cv2, outputs, faces):
