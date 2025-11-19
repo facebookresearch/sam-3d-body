@@ -1,6 +1,6 @@
 # SAM 3D
 
-SAM 3D Body is one part of SAM 3D, a pair of models for full-body human mesh recovery. If you’re looking for SAM 3D Objects, [click here](https://github.com/facebookresearch/sam-3d-objects).
+SAM 3D Body is one part of SAM 3D, a pair of models for robust full-body human mesh recovery. If you’re looking for SAM 3D Objects, [click here](https://github.com/facebookresearch/sam-3d-objects).
 
 # SAM 3D Body: Robust Full-Body Human Mesh Recovery 
 
@@ -75,6 +75,10 @@ See [Install.md](INSTALL.md)
 
 Models can be loaded directly from [Hugging Face](https://huggingface.co/facebook):
 
+**Available models:**
+- [`facebook/sam-3d-body-dinov3`](https://huggingface.co/facebook/sam-3d-body-dinov3)
+- [`facebook/sam-3d-body-vith`](https://huggingface.co/facebook/sam-3d-body-vith)
+
 ```python
 from sam_3d_body import load_sam_3d_body_hf, SAM3DBodyEstimator
 
@@ -87,11 +91,9 @@ estimator = SAM3DBodyEstimator(
     model_cfg=model_cfg,
 )
 
-# Process image
+# 3D human mesh recovery
 outputs = estimator.process_one_image("path/to/image.jpg")
 ```
-
-Available models: `facebook/sam-3d-body-dinov3`, `facebook/sam-3d-body-vith`
 
 For a complete demo with visualization, see [notebook/demo_human.ipynb](notebook/demo_human.ipynb).
 
@@ -100,7 +102,7 @@ For a complete demo with visualization, see [notebook/demo_human.ipynb](notebook
 
 ### SAM 3D Body checkpoints
 
-The table below shows the SAM 3D Body checkpoints released on [TODO: Update this].
+The table below shows the performance of SAM 3D Body checkpoints released on 11/19/2025.
 
 |      **Backbone**       | **3DPW (MPJPE)** |    **EMDB (MPJPE)**     | **RICH (MPJPE)** | **COCO (PCK@.05)** |  **LSPET (PCK@.05)** | **Freihand (PA-MPJPE)**
 | :------------------: | :----------: | :--------------------: | :-----------------: | :----------------: | :----------------: | :----------------: |
@@ -110,6 +112,11 @@ The table below shows the SAM 3D Body checkpoints released on [TODO: Update this
 ## SAM 3D Body Dataset
 The SAM 3D Body data is released in [Hugging Face](https://huggingface.co/datasets/facebook/sam-3d-body-dataset). Please follow the [instructions](./data/README.md) to download and process the data.
 
+## SAM 3D Objects
+
+[SAM 3D Objects](https://github.com/facebookresearch/sam-3d-objects) is a foundation model that reconstructs full 3D shape geometry, texture, and layout from a single image.
+
+As a way to combine the strengths of both **SAM 3D Objects** and **SAM 3D Body**, we provide an example notebook that demonstrates how to combine the results of both models such that they are aligned in the same frame of reference. Check it out [here](https://github.com/facebookresearch/sam-3d-objects/blob/main/notebook/demo_3db_mesh_alignment.ipynb).
 
 ## License
 
