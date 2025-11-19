@@ -22,7 +22,6 @@ def load_sam_3d_body(checkpoint_path: str = "", device: str = "cuda", mhr_path: 
 
     # Disable face for inference
     model_cfg.defrost()
-    # TODO: fix ALTAS
     model_cfg.MODEL.MHR_HEAD.MHR_MODEL_PATH = mhr_path
     model_cfg.freeze()
 
@@ -44,7 +43,7 @@ def load_sam_3d_body(checkpoint_path: str = "", device: str = "cuda", mhr_path: 
 def _hf_download(repo_id):
     from huggingface_hub import snapshot_download
     local_dir = snapshot_download(repo_id=repo_id)
-    return os.path.join(local_dir, "model.ckpt"), os.path.join(local_dir, "assets")
+    return os.path.join(local_dir, "model.ckpt"), os.path.join(local_dir, "assets", "mhr_model.pt")
 
 
 def load_sam_3d_body_hf(repo_id, **kwargs):

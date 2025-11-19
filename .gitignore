@@ -98,7 +98,6 @@ dmypy.json
 
 # Project-specific: Media files
 *.mp4
-*.jpg
 
 # Project-specific: Archives
 *.tar

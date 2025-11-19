@@ -3,10 +3,11 @@
 import os
 import torch
 import numpy as np
+from pathlib import Path
 
 
 class HumanDetector:
-    def __init__(self, name="vitdet", device="cuda", **kwargs):
+    def __init__(self, name="vitdet", device="cuda", path=None, **kwargs):
         self.device = device
 
         if name == "vitdet":
@@ -18,24 +19,33 @@ class HumanDetector:
             self.detector.eval()
         else:
             raise NotImplementedError
-    
+
     def run_human_detection(self, img, **kwargs):
         return self.detector_func(self.detector, img, **kwargs)
-        
 
-def load_detectron2_vitdet(path):
+def load_detectron2_vitdet():
+    """
+    Load vitdet detector similar to 4D-Humans demo.py approach.
+    Checkpoint is automatically downloaded from the hardcoded URL.
+    """
     from detectron2.checkpoint import DetectionCheckpointer
-    from detectron2.config import instantiate, LazyConfig
+    from detectron2.config import LazyConfig, instantiate
 
-    DETECTRON_CFG = os.path.join(path, "cascade_mask_rcnn_vitdet_h_75ep.py")
-    DETECTRON_CKPT = os.path.join(path, "model_final_f05665.pkl")
+    # Get config file from tools directory (same folder as this file)
+    cfg_path = Path(__file__).parent / 'cascade_mask_rcnn_vitdet_h_75ep.py'
+    if not cfg_path.exists():
+        raise FileNotFoundError(
+            f"Config file not found at {cfg_path}. "
+            "Make sure cascade_mask_rcnn_vitdet_h_75ep.py exists in the tools directory."
+        )
 
-    detectron2_cfg = LazyConfig.load(str(DETECTRON_CFG))
+    detectron2_cfg = LazyConfig.load(str(cfg_path))
+    detectron2_cfg.train.init_checkpoint = "https://dl.fbaipublicfiles.com/detectron2/ViTDet/COCO/cascade_mask_rcnn_vitdet_h/f328730692/model_final_f05665.pkl"
     for i in range(3):
         detectron2_cfg.model.roi_heads.box_predictors[i].test_score_thresh = 0.25
     detector = instantiate(detectron2_cfg.model)
     checkpointer = DetectionCheckpointer(detector)
-    checkpointer.load(DETECTRON_CKPT)
+    checkpointer.load(detectron2_cfg.train.init_checkpoint)
 
     detector.eval()
     return detector
