@@ -106,10 +106,10 @@ model = build_sam_3d_body_model(
 
 The table below shows the SAM 3D Body checkpoints released on [TODO: Update this].
 
-|      **Model**       | **Size (M)** |    **Speed (FPS)**     | **H36M test (MPJPE)** | **3DPW test (MPJPE)** |
-| :------------------: | :----------: | :--------------------: | :-----------------: | :----------------: |
-|   sam_3d_body <br /> ([config](https://huggingface.co/facebook/sam-3d-body/blob/main/model_config.yaml), [checkpoint](https://huggingface.co/facebook/sam-3d-body))    |     TBD     |          TBD          |        TBD         |        TBD        |
-|   sam_3d_body_small <br /> ([config](https://huggingface.co/facebook/sam-3d-body-small/blob/main/model_config.yaml), [checkpoint](https://huggingface.co/facebook/sam-3d-body-fast))   |      TBD      |          TBD          |        TBD         |        TBD        |
+|      **Model**       | **3DPW (MPJPE)** |    **EMDB (MPJPE)**     | **RICH (MPJPE)** | **COCO (PCK@.05)** |  **LSPET (PCK@.05)** | **Freihand (PA-MPJPE)**
+| :------------------: | :----------: | :--------------------: | :-----------------: | :----------------: | :----------------: | :----------------: |
+|   sam_3d_body ViT-H<br /> ([config](https://huggingface.co/facebook/sam-3d-body/blob/main/model_config.yaml), [checkpoint](https://huggingface.co/facebook/sam-3d-body))    |     54.8   |         62.9         |       55.0        |        86.8       | 68.9 |  5.5
+|   sam_3d_body DINOv3 <br /> ([config](https://huggingface.co/facebook/sam-3d-body-small/blob/main/model_config.yaml), [checkpoint](https://huggingface.co/facebook/sam-3d-body-fast))   |      54.8      |          61.7         |       53.7        |       86.5        | 68.0 | 5.5
 
 
 < TODO: Update when we run speedtests >
