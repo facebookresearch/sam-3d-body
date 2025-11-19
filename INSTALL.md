@@ -9,7 +9,7 @@ conda create -n sam_3d_body python=3.12 -y
 conda activate sam_3d_body
 ```
 
-### 2. Install PyTorch
+### 2. Install PyTorch (select a version)
 
 ```bash
 # CUDA 11.8
