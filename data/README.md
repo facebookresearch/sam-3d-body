@@ -9,7 +9,7 @@ conda create --name sam_3d_body_data python=3.9 -y
 conda activate sam_3d_body_data
 conda install pytorch=2.4.0 torchvision torchaudio pytorch-cuda=11.8 -c pytorch -c nvidia -y
 pip install hdbscan pyntcloud==0.3.1 pykalman torchgeometry colour==0.1.5 flask==3.1.1 trimesh==4.7.3
-pip install pandas==2.0.3 numpy==1.26 pycolmap==0.3.0 smplx==0.1.28 yacs==0.1.8 projectaria-tools==1.3.3 opencv-python==4.7.0.72
+pip install pandas==2.0.3 numpy==1.26 pycolmap==0.3.0 yacs==0.1.8 projectaria-tools==1.3.3 opencv-python==4.7.0.72
 pip install datasets huggingface_hub webdataset pycocotools
 ```
 

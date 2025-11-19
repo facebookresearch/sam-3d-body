@@ -7,7 +7,6 @@ from yacs.config import CfgNode as CN
 
 ##---------------------------------------
 _C = CN()
-_C.SMPL_MODEL_DIR = '/private/home/taoshaf/data/smpl' # Replace this with your SMPL model directory
 _C.INVALID_ARIAS = []
 _C.INVALID_EXOS = []
 _C.SEQUENCE_TOTAL_TIME = -1

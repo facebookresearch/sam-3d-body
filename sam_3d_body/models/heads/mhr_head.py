@@ -39,7 +39,6 @@ class MHRHead(nn.Module):
         mlp_depth: int = 1,
         mhr_model_path: str = "",
         extra_joint_regressor: str = "",
-        smpl_model_path: str = "",
         ffn_zero_bias: bool = True,
         mlp_channel_div_factor: int = 8,
         enable_hand_model=False,
