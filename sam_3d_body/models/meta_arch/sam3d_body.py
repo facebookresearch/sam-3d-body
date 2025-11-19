@@ -482,17 +482,7 @@ class SAM3DBody(BaseModel):
             
             return pose_output
 
-        # TODO: clean up v1/v2/v3 in config
-        if self.cfg.MODEL.DECODER.get("KEYPOINT_TOKEN_UPDATE", None) in [
-            "v1",
-            "v2",
-            "v3",
-        ]:
-            # For this one, we're going to take the projected 2D KPS, get posembs
-            # (prompt encoder style, and set that as the keypoint posemb)
-            kp_token_update_fn = self.keypoint_token_update_fn
-        else:
-            kp_token_update_fn = None
+        kp_token_update_fn = self.keypoint_token_update_fn
 
         # Now for 3D
         kp3d_token_update_fn = self.keypoint3d_token_update_fn
@@ -731,16 +721,7 @@ class SAM3DBody(BaseModel):
 
             return pose_output
 
-        if self.cfg.MODEL.DECODER.get("KEYPOINT_TOKEN_UPDATE", None) in [
-            "v1",
-            "v2",
-            "v3",
-        ]:
-            # For this one, we're going to take the projected 2D KPS, get posembs
-            # (prompt encoder style, and set that as the keypoint posemb)
-            kp_token_update_fn = self.keypoint_token_update_fn_hand
-        else:
-            kp_token_update_fn = None
+        kp_token_update_fn = self.keypoint_token_update_fn_hand
 
         # Now for 3D
         kp3d_token_update_fn = self.keypoint3d_token_update_fn_hand
@@ -1229,7 +1210,6 @@ class SAM3DBody(BaseModel):
         transform_hand,
         use_hand_box=True,
         thresh_wrist_angle=1.4,
-        hand_scale_factor=None,
     ):
         height, width = img.shape[:2]
         cam_int = batch["cam_int"].clone()
@@ -1240,7 +1220,7 @@ class SAM3DBody(BaseModel):
         self.disable_hand = True
         self.disable_body = False
         pose_output, _ = self.forward_step(batch)
-        batch = self._get_hand_box(pose_output, batch, scale_factor=hand_scale_factor)
+        batch = self._get_hand_box(pose_output, batch, scale_factor=None)
         ori_local_wrist_rotmat = roma.euler_to_rotmat(
             "XZY",
             pose_output['mhr']['body_pose'][:, [41, 43, 42, 31, 33, 32]].unflatten(1, (2, 3))
@@ -1289,11 +1269,10 @@ class SAM3DBody(BaseModel):
         # Unflip output
         ## Flip scale
         ### Get MHR values
-        # TODO: put this into utils function and load it here.
-        scale_r_hands_mean = -0.1798856556415558
-        scale_l_hands_mean = -0.18402963876724243
-        scale_r_hands_std = 0.04739458113908768
-        scale_l_hands_std = 0.04183576628565788
+        scale_r_hands_mean = self.head_pose.scale_mean[8].item()
+        scale_l_hands_mean = self.head_pose.scale_mean[9].item()
+        scale_r_hands_std = self.head_pose.scale_comps[8, 8].item()
+        scale_l_hands_std = self.head_pose.scale_comps[9, 9].item()
         ### Apply
         lhand_output['mhr_hand']['scale'][:, 9] = ((scale_r_hands_mean + scale_r_hands_std * lhand_output['mhr_hand']['scale'][:, 8]) - scale_l_hands_mean) / scale_l_hands_std
         ## Get the right hand global rotation, flip it, put it in as left.
@@ -1345,14 +1324,12 @@ class SAM3DBody(BaseModel):
         ], dim=1)
         ## CRITERIA 3: all hand 2D KPS (including wrist) inside of box.
         hand_kps2d_thresh = 0.5
-        # hand_kps2d_thresh = 99
         hand_kps2d_valid_mask = torch.stack([
             lhand_output['mhr_hand']['pred_keypoints_2d_cropped'].abs().amax(dim=(1, 2)) < hand_kps2d_thresh,
             rhand_output['mhr_hand']['pred_keypoints_2d_cropped'].abs().amax(dim=(1, 2)) < hand_kps2d_thresh,
         ], dim=1)
         ## CRITERIA 4: 2D wrist distance.
         hand_wrist_kps2d_thresh = 0.25
-        # hand_wrist_kps2d_thresh = 99
         kps_right_wrist_idx = 41
         kps_left_wrist_idx = 62
         right_kps_full = rhand_output['mhr_hand']['pred_keypoints_2d'][:, [kps_right_wrist_idx]].clone()
@@ -1373,6 +1350,7 @@ class SAM3DBody(BaseModel):
             & hand_kps2d_valid_mask
             & hand_wrist_kps2d_valid_mask
         )
+        print(hand_valid_mask, use_hand_box, thresh_wrist_angle)
         
         self.hand_batch_idx = []
         self.body_batch_idx = list(range(batch["img"].shape[1]))
@@ -1544,6 +1522,21 @@ class SAM3DBody(BaseModel):
             pose_output['mhr']['pred_pose_raw'][...] = 0  # pred_pose_raw is not valid anymore
             pose_output['mhr']['mhr_model_params'] = mhr_model_params
         
+        ########################################################
+        # Project to 2D
+        pred_keypoints_3d_proj = (
+            pose_output['mhr']['pred_keypoints_3d'] + pose_output['mhr']['pred_cam_t'][:, None, :]
+        )
+        pred_keypoints_3d_proj[:, :, [0, 1]] *= pose_output['mhr']["focal_length"][:, None, None]
+        pred_keypoints_3d_proj[:, :, [0, 1]] = (
+            pred_keypoints_3d_proj[:, :, [0, 1]]
+            + torch.FloatTensor([width / 2, height / 2]).to(pred_keypoints_3d_proj)[None, None, :] * pred_keypoints_3d_proj[:, :, [2]]
+        )
+        pred_keypoints_3d_proj[:, :, :2] = (
+            pred_keypoints_3d_proj[:, :, :2] / pred_keypoints_3d_proj[:, :, [2]]
+        )
+        pose_output['mhr']['pred_keypoints_2d'] = pred_keypoints_3d_proj[:, :, :2]
+    
         return pose_output, batch_lhand, batch_rhand, lhand_output, rhand_output
     
     def run_keypoint_prompt(self, batch, output, keypoint_prompt):
@@ -1700,50 +1693,48 @@ class SAM3DBody(BaseModel):
 
         # Also maybe update token_embeddings with the grid sampled 2D feature.
         # Remember that pred_keypoints_2d_cropped are -0.5 ~ 0.5. We want -1 ~ 1
-        if self.cfg.MODEL.DECODER.KEYPOINT_TOKEN_UPDATE in ["v2"]:
-            # Sample points...
-            ## Get sampling points
-            pred_keypoints_2d_cropped_sample_points = pred_keypoints_2d_cropped * 2
-            if self.cfg.MODEL.BACKBONE.TYPE in [
-                "vit_hmr",
-                "hmr2",
-                "vit",
-                "vit_b",
-                "vit_l",
-                "vit_hmr_512_384",
-            ]:
-                # Need to go from 256 x 256 coords to 256 x 192 (HW) because image_embeddings is 16x12
-                # Aka, for x, what was normally -1 ~ 1 for 256 should be -16/12 ~ 16/12 (since to sample at original 256, need to overflow)
-                pred_keypoints_2d_cropped_sample_points[:, :, 0] = (
-                    pred_keypoints_2d_cropped_sample_points[:, :, 0] / 12 * 16
-                )
+        # Sample points...
+        ## Get sampling points
+        pred_keypoints_2d_cropped_sample_points = pred_keypoints_2d_cropped * 2
+        if self.cfg.MODEL.BACKBONE.TYPE in [
+            "vit_hmr",
+            "hmr2",
+            "vit",
+            "vit_b",
+            "vit_l",
+            "vit_hmr_512_384",
+        ]:
+            # Need to go from 256 x 256 coords to 256 x 192 (HW) because image_embeddings is 16x12
+            # Aka, for x, what was normally -1 ~ 1 for 256 should be -16/12 ~ 16/12 (since to sample at original 256, need to overflow)
+            pred_keypoints_2d_cropped_sample_points[:, :, 0] = (
+                pred_keypoints_2d_cropped_sample_points[:, :, 0] / 12 * 16
+            )
 
-            if self.cfg.MODEL.DECODER.KEYPOINT_TOKEN_UPDATE in ["v2"]:
-                # Version 2 is projecting & bilinear sampling
-                pred_keypoints_2d_cropped_feats = (
-                    F.grid_sample(
-                        image_embeddings,
-                        pred_keypoints_2d_cropped_sample_points[
-                            :, :, None, :
-                        ],  # -1 ~ 1, xy
-                        mode="bilinear",
-                        padding_mode="zeros",
-                        align_corners=False,
-                    )
-                    .squeeze(3)
-                    .permute(0, 2, 1)
-                )  # B x kps x C
-                # Zero out invalid locations...
-                pred_keypoints_2d_cropped_feats = (
-                    pred_keypoints_2d_cropped_feats * (~invalid_mask[:, :, None])
-                )
-                # This is ADDING
-                token_embeddings = token_embeddings.clone()
-                token_embeddings[
-                    :,
-                    kps_emb_start_idx : kps_emb_start_idx + num_keypoints,
-                    :,
-                ] += self.keypoint_feat_linear(pred_keypoints_2d_cropped_feats)
+        # Version 2 is projecting & bilinear sampling
+        pred_keypoints_2d_cropped_feats = (
+            F.grid_sample(
+                image_embeddings,
+                pred_keypoints_2d_cropped_sample_points[
+                    :, :, None, :
+                ],  # -1 ~ 1, xy
+                mode="bilinear",
+                padding_mode="zeros",
+                align_corners=False,
+            )
+            .squeeze(3)
+            .permute(0, 2, 1)
+        )  # B x kps x C
+        # Zero out invalid locations...
+        pred_keypoints_2d_cropped_feats = (
+            pred_keypoints_2d_cropped_feats * (~invalid_mask[:, :, None])
+        )
+        # This is ADDING
+        token_embeddings = token_embeddings.clone()
+        token_embeddings[
+            :,
+            kps_emb_start_idx : kps_emb_start_idx + num_keypoints,
+            :,
+        ] += self.keypoint_feat_linear(pred_keypoints_2d_cropped_feats)
 
         return token_embeddings, token_augment, pose_output, layer_idx
 
@@ -1840,50 +1831,48 @@ class SAM3DBody(BaseModel):
 
         # Also maybe update token_embeddings with the grid sampled 2D feature.
         # Remember that pred_keypoints_2d_cropped are -0.5 ~ 0.5. We want -1 ~ 1
-        if self.cfg.MODEL.DECODER.KEYPOINT_TOKEN_UPDATE in ["v2"]:
-            # Sample points...
-            ## Get sampling points
-            pred_keypoints_2d_cropped_sample_points = pred_keypoints_2d_cropped * 2
-            if self.cfg.MODEL.BACKBONE.TYPE in [
-                "vit_hmr",
-                "hmr2",
-                "vit",
-                "vit_b",
-                "vit_l",
-                "vit_hmr_512_384",
-            ]:
-                # Need to go from 256 x 256 coords to 256 x 192 (HW) because image_embeddings is 16x12
-                # Aka, for x, what was normally -1 ~ 1 for 256 should be -16/12 ~ 16/12 (since to sample at original 256, need to overflow)
-                pred_keypoints_2d_cropped_sample_points[:, :, 0] = (
-                    pred_keypoints_2d_cropped_sample_points[:, :, 0] / 12 * 16
-                )
+        # Sample points...
+        ## Get sampling points
+        pred_keypoints_2d_cropped_sample_points = pred_keypoints_2d_cropped * 2
+        if self.cfg.MODEL.BACKBONE.TYPE in [
+            "vit_hmr",
+            "hmr2",
+            "vit",
+            "vit_b",
+            "vit_l",
+            "vit_hmr_512_384",
+        ]:
+            # Need to go from 256 x 256 coords to 256 x 192 (HW) because image_embeddings is 16x12
+            # Aka, for x, what was normally -1 ~ 1 for 256 should be -16/12 ~ 16/12 (since to sample at original 256, need to overflow)
+            pred_keypoints_2d_cropped_sample_points[:, :, 0] = (
+                pred_keypoints_2d_cropped_sample_points[:, :, 0] / 12 * 16
+            )
 
-            if self.cfg.MODEL.DECODER.KEYPOINT_TOKEN_UPDATE in ["v2"]:
-                # Version 2 is projecting & bilinear sampling
-                pred_keypoints_2d_cropped_feats = (
-                    F.grid_sample(
-                        image_embeddings,
-                        pred_keypoints_2d_cropped_sample_points[
-                            :, :, None, :
-                        ],  # -1 ~ 1, xy
-                        mode="bilinear",
-                        padding_mode="zeros",
-                        align_corners=False,
-                    )
-                    .squeeze(3)
-                    .permute(0, 2, 1)
-                )  # B x kps x C
-                # Zero out invalid locations...
-                pred_keypoints_2d_cropped_feats = (
-                    pred_keypoints_2d_cropped_feats * (~invalid_mask[:, :, None])
-                )
-                # This is ADDING
-                token_embeddings = token_embeddings.clone()
-                token_embeddings[
-                    :,
-                    kps_emb_start_idx : kps_emb_start_idx + num_keypoints,
-                    :,
-                ] += self.keypoint_feat_linear_hand(pred_keypoints_2d_cropped_feats)
+        # Version 2 is projecting & bilinear sampling
+        pred_keypoints_2d_cropped_feats = (
+            F.grid_sample(
+                image_embeddings,
+                pred_keypoints_2d_cropped_sample_points[
+                    :, :, None, :
+                ],  # -1 ~ 1, xy
+                mode="bilinear",
+                padding_mode="zeros",
+                align_corners=False,
+            )
+            .squeeze(3)
+            .permute(0, 2, 1)
+        )  # B x kps x C
+        # Zero out invalid locations...
+        pred_keypoints_2d_cropped_feats = (
+            pred_keypoints_2d_cropped_feats * (~invalid_mask[:, :, None])
+        )
+        # This is ADDING
+        token_embeddings = token_embeddings.clone()
+        token_embeddings[
+            :,
+            kps_emb_start_idx : kps_emb_start_idx + num_keypoints,
+            :,
+        ] += self.keypoint_feat_linear_hand(pred_keypoints_2d_cropped_feats)
 
         return token_embeddings, token_augment, pose_output, layer_idx
 

@@ -147,8 +147,6 @@ def visualize_sample_together(img_cv2, outputs, faces):
         * 255
     )
 
-    rend_img = []
-    cur_img = np.concatenate([img_cv2, img_keypoints, img_mesh, img_mesh_side, img_mesh_top], axis=1)
-    rend_img.append(cur_img)
+    cur_img = np.concatenate([img_cv2, img_keypoints, img_mesh, img_mesh_side], axis=1)
 
-    return rend_img
+    return cur_img

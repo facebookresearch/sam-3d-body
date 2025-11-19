@@ -35,7 +35,7 @@ class SAM3DBodyEstimator:
         self.fov_estimator = fov_estimator
         self.prompt_wrists = prompt_wrists
         self.use_hand_box = use_hand_box
-        self.thresh_wrist_angle = 1.2
+        self.thresh_wrist_angle = 1.4
 
         # For mesh visualization
         self.faces = self.model.head_pose.faces.cpu().numpy()
@@ -187,6 +187,7 @@ class SAM3DBodyEstimator:
                     "bbox": batch["bbox"][0, idx].cpu().numpy(),
                     "focal_length": out["focal_length"][idx],
                     "pred_keypoints_3d": out["pred_keypoints_3d"][idx],
+                    "pred_keypoints_2d": out["pred_keypoints_2d"][idx],
                     "pred_vertices": out["pred_vertices"][idx],
                     "pred_cam_t": out["pred_cam_t"][idx],
                     "pred_pose_raw": out["pred_pose_raw"][idx],
@@ -201,20 +202,6 @@ class SAM3DBodyEstimator:
                     "pred_global_rots": out['joint_global_rots'][idx],
                 }
             )
-
-            # TODO: move it into meta_arch class
-            pred_keypoints_3d_proj = (
-                all_out[-1]["pred_keypoints_3d"] + all_out[-1]["pred_cam_t"]
-            )
-            pred_keypoints_3d_proj[:, [0, 1]] *= all_out[-1]["focal_length"]
-            pred_keypoints_3d_proj[:, [0, 1]] = (
-                pred_keypoints_3d_proj[:, [0, 1]]
-                + np.array([width / 2, height / 2]) * pred_keypoints_3d_proj[:, [2]]
-            )
-            pred_keypoints_3d_proj[:, :2] = (
-                pred_keypoints_3d_proj[:, :2] / pred_keypoints_3d_proj[:, [2]]
-            )
-            all_out[-1]["pred_keypoints_2d"] = pred_keypoints_3d_proj[:, :2]
 
             all_out[-1]["lhand_bbox"] = np.array([
                 (batch_lhand['bbox_center'].flatten(0, 1)[idx][0] - batch_lhand['bbox_scale'].flatten(0, 1)[idx][0] / 2).item(),
