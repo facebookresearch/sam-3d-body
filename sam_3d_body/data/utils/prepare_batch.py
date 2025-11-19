@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 import numpy as np
 import torch
 from torch.utils.data import default_collate

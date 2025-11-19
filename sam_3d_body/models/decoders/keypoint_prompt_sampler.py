@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 from abc import ABC, abstractmethod
 from typing import Dict, List
 import random

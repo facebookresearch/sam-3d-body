@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 """Adapted from MMPose"""
 
 from typing import Callable, Dict, List, Optional, Tuple, Union

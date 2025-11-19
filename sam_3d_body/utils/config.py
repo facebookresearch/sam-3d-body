@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 from typing import Dict
 from yacs.config import CfgNode as CN
 from omegaconf import OmegaConf, DictConfig, ListConfig

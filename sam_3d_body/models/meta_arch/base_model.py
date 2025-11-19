@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 """Define an abstract base model for consistent format input / processing / output."""
 
 from abc import abstractmethod

@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 from .common import Compose, GetBBoxCenterScale, VisionTransformWrapper, SquarePad, TopdownAffine, NormalizeKeypoint
 
 from .bbox_utils import (

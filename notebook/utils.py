@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 """
 Utility functions for SAM 3D Body demo notebook
 """
