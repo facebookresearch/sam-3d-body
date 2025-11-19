@@ -96,10 +96,10 @@ class MHRHead(nn.Module):
         self.nonhand_param_idxs = nn.Parameter(torch.zeros(145).long(), requires_grad=False)
 
         # Load MHR itself
-        if not MOMENTUM_ENABLED:
-            self.mhr = torch.jit.load(mhr_model_path, map_location=('cuda' if torch.cuda.is_available() else 'cpu'))
-        else:
+        if MOMENTUM_ENABLED:
             self.mhr = MHR.from_files(device=torch.device('cuda' if torch.cuda.is_available() else 'cpu'), lod=1)
+        else:
+            self.mhr = torch.jit.load(mhr_model_path, map_location=('cuda' if torch.cuda.is_available() else 'cpu'))
 
         for param in self.mhr.parameters():
             param.requires_grad = False
@@ -188,10 +188,7 @@ class MHRHead(nn.Module):
             # Zero out non-hand parameters
             model_params[:, self.nonhand_param_idxs] = 0
 
-        if not MOMENTUM_ENABLED:
-            curr_skinned_verts, joint_params, curr_skel_state = self.mhr(shape_params, model_params, expr_params)
-        else:
-            curr_skinned_verts, curr_skel_state = self.mhr(shape_params, model_params, expr_params)
+        curr_skinned_verts, curr_skel_state = self.mhr(shape_params, model_params, expr_params)
         curr_joint_coords, curr_joint_quats, _ = torch.split(curr_skel_state, [3, 4, 1], dim=2)
         curr_skinned_verts = curr_skinned_verts / 100
         curr_joint_coords = curr_joint_coords / 100
