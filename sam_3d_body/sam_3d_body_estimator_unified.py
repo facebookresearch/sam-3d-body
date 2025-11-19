@@ -515,7 +515,7 @@ class SAM3DBodyEstimatorUnified:
             & hand_kps2d_valid_mask
             & hand_wrist_kps2d_valid_mask
         )
-
+        
         if self.prompt_wrists:
             # TODO: check rotation_angle_difference beforehand.
             # TODO: Left first or right first? Does it matter?
@@ -582,8 +582,11 @@ class SAM3DBodyEstimatorUnified:
                     keypoint_prompt[:, :, :2] + 0.5, min=0.0, max=1.0
                 )  # [-0.5, 0.5] --> [0, 1]
             
-            if len(keypoint_prompt):
-                pose_output, _ = self._prompt_wrists(batch, pose_output, keypoint_prompt)
+            try:
+                if keypoint_prompt.numel() != 0:
+                    pose_output, _ = self._prompt_wrists(batch, pose_output, keypoint_prompt)
+            except:
+                pass
 
         # Drop in hand pose
         left_hand_pose_params = lhand_output['atlas']['hand'][:, :54]
