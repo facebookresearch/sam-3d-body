@@ -1,4 +1,3 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
 """
 Utility functions for SAM 3D Body demo notebook
 """
@@ -7,19 +6,96 @@ import os
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
-import gradio as gr
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
+import torch
 
+from sam_3d_body import load_sam_3d_body_hf, SAM3DBodyEstimator
 from sam_3d_body.visualization.skeleton_visualizer import SkeletonVisualizer
 from sam_3d_body.visualization.renderer import Renderer
-from sam_3d_body.metadata.atlas70 import pose_info as atlas70_pose_info
+from sam_3d_body.metadata.mhr70 import pose_info as mhr70_pose_info
 
 LIGHT_BLUE = (0.65098039, 0.74117647, 0.85882353)
 
+
+def setup_sam_3d_body(
+    hf_repo_id: str = "facebook/sam-3d-body-vith",
+    detector_path: str = "https://dl.fbaipublicfiles.com/detectron2/ViTDet/COCO/cascade_mask_rcnn_vitdet_h/f328730692/model_final_f05665.pkl",
+    segmentor_path: Optional[str] = None,
+    fov_path: str = "Ruicheng/moge-2-vitl-normal",
+    detector_name: str = "vitdet",
+    segmentor_name: str = "sam2",
+    fov_name: str = "moge2",
+    device: Optional[str] = None,
+):
+    """
+    Set up SAM 3D Body estimator with optional components.
+
+    Args:
+        hf_repo_id: HuggingFace repository ID for the model
+        detector_path: URL or path for human detector model (default: vitdet weights URL)
+        segmentor_path: Path to human segmentor model (optional)
+        fov_path: path for FOV estimator (default: "Ruicheng/moge-2-vitl-normal")
+        detector_name: Name of detector to use (default: "vitdet")
+        segmentor_name: Name of segmentor to use (default: "sam2")
+        fov_name: Name of FOV estimator to use (default: "moge2")
+        device: Device to use (default: auto-detect cuda/cpu)
+
+    Returns:
+        estimator: SAM3DBodyEstimator instance ready for inference
+    """
+    print(f"Loading SAM 3D Body model from {hf_repo_id}...")
+
+    # Auto-detect device if not specified
+    if device is None:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    # Load core model from HuggingFace
+    model, model_cfg = load_sam_3d_body_hf(hf_repo_id, device=device)
+
+    # Initialize optional components
+    human_detector, human_segmentor, fov_estimator = None, None, None
+
+    if detector_path:
+        print(f"Loading human detector from {detector_path}...")
+        from tools.build_detector import HumanDetector
+        human_detector = HumanDetector(
+            name=detector_name, device=device, path=detector_path
+        )
+
+    if segmentor_path:
+        print(f"Loading human segmentor from {segmentor_path}...")
+        from tools.build_sam import HumanSegmentor
+        human_segmentor = HumanSegmentor(
+            name=segmentor_name, device=device, path=segmentor_path
+        )
+
+    if fov_path:
+        print(f"Loading FOV estimator from {fov_path}...")
+        from tools.build_fov_estimator import FOVEstimator
+        fov_estimator = FOVEstimator(
+            name=fov_name, device=device, path=fov_path
+        )
+
+    # Create estimator wrapper
+    estimator = SAM3DBodyEstimator(
+        sam_3d_body_model=model,
+        model_cfg=model_cfg,
+        human_detector=human_detector,
+        human_segmentor=human_segmentor,
+        fov_estimator=fov_estimator,
+    )
+
+    print(f"Setup complete!")
+    print(f"  Human detector: {'✓' if human_detector else '✗ (will use full image or manual bbox)'}")
+    print(f"  Human segmentor: {'✓' if human_segmentor else '✗ (mask inference disabled)'}")
+    print(f"  FOV estimator: {'✓' if fov_estimator else '✗ (will use default FOV)'}")
+
+    return estimator
+
 def setup_visualizer():
-    """Set up skeleton visualizer with Atlas70 pose info"""
+    """Set up skeleton visualizer with MHR70 pose info"""
     visualizer = SkeletonVisualizer(line_width=2, radius=5)
-    visualizer.set_pose_meta(atlas70_pose_info)
+    visualizer.set_pose_meta(mhr70_pose_info)
     return visualizer
 
 def visualize_2d_results(img_cv2: np.ndarray, outputs: List[Dict[str, Any]], 
@@ -112,12 +188,24 @@ def visualize_3d_mesh(img_cv2: np.ndarray, outputs: List[Dict[str, Any]],
     
     return results
 
-def save_mesh_results(img_cv2: np.ndarray, outputs: List[Dict[str, Any]], 
+def save_mesh_results(img_cv2: np.ndarray, outputs: List[Dict[str, Any]],
                      faces: np.ndarray, save_dir: str, image_name: str) -> List[str]:
     """Save 3D mesh results to files and return PLY file paths"""
+    import json
+
     os.makedirs(save_dir, exist_ok=True)
     ply_files = []
-    
+
+    # Save focal length
+    if outputs:
+        focal_length_data = {
+            "focal_length": float(outputs[0]["focal_length"])
+        }
+        focal_length_path = os.path.join(save_dir, f"{image_name}_focal_length.json")
+        with open(focal_length_path, 'w') as f:
+            json.dump(focal_length_data, f, indent=2)
+        print(f"Saved focal length: {focal_length_path}")
+
     for pid, person_output in enumerate(outputs):
         # Create renderer for this person
         renderer = Renderer(
@@ -212,20 +300,39 @@ def display_results_grid(images: List[np.ndarray], titles: List[str],
     plt.tight_layout()
     plt.show()
 
-def process_image_with_mask(model, image_path: str, mask_path: str):
-    """Process image with external mask input"""
+def process_image_with_mask(estimator, image_path: str, mask_path: str):
+    """
+    Process image with external mask input.
+
+    Note: The refactored code requires bboxes to be provided along with masks.
+    This function automatically computes bboxes from the mask.
+    """
     # Load mask
     mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
     if mask is None:
         raise ValueError(f"Could not load mask from {mask_path}")
-    
+
     # Ensure mask is binary (0 or 255)
-    mask = (mask > 127).astype(np.uint8) * 255
-    
+    mask_binary = (mask > 127).astype(np.uint8) * 255
+
     print(f"Processing image with external mask: {mask_path}")
-    print(f"Mask shape: {mask.shape}, unique values: {np.unique(mask)}")
-    
-    # Process with external mask
-    outputs = model.process_one_image(image_path, masks=mask)
-    
+    print(f"Mask shape: {mask_binary.shape}, unique values: {np.unique(mask_binary)}")
+
+    # Compute bounding box from mask (required by refactored code)
+    # Find all non-zero pixels in the mask
+    coords = cv2.findNonZero(mask_binary)
+    if coords is None:
+        print("Warning: Mask is empty, no objects detected")
+        return []
+
+    # Get bounding box from mask contours
+    x, y, w, h = cv2.boundingRect(coords)
+    bbox = np.array([[x, y, x + w, y + h]], dtype=np.float32)
+
+    print(f"Computed bbox from mask: {bbox[0]}")
+
+    # Process with external mask and computed bbox
+    # Note: The mask needs to match the number of bboxes (1 bbox -> 1 mask)
+    outputs = estimator.process_one_image(image_path, bboxes=bbox, masks=mask_binary)
+
     return outputs
