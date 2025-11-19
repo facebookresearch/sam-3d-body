@@ -9,7 +9,7 @@ class FOVEstimator:
 
         if name == "moge2":
             print("########### Using fov estimator: MoGe2...")
-            self.fov_estimator = load_moge(device, **kwargs)
+            self.fov_estimator = load_moge(device)
             self.fov_estimator_func = run_moge
 
             self.fov_estimator.eval()
@@ -20,10 +20,10 @@ class FOVEstimator:
         return self.fov_estimator_func(self.fov_estimator, img, self.device, **kwargs)
         
 
-def load_moge(device, path):
+def load_moge(device):
     from moge.model.v2 import MoGeModel
 
-    moge_model = MoGeModel.from_pretrained(path).to(device)
+    moge_model = MoGeModel.from_pretrained("Ruicheng/moge-2-vitl-normal").to(device)
     return moge_model
 
 

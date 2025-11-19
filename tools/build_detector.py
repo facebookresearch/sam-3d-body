@@ -12,7 +12,7 @@ class HumanDetector:
 
         if name == "vitdet":
             print("########### Using human detector: ViTDet...")
-            self.detector = load_detectron2_vitdet(**kwargs)
+            self.detector = load_detectron2_vitdet()
             self.detector_func = run_detectron2_vitdet
 
             self.detector = self.detector.to(self.device)
