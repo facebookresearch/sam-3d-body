@@ -1,12 +1,13 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
+
 import os
-import tempfile
-import shutil
 import pickle
+import shutil
+import tempfile
+from typing import Any, Iterable, List, Mapping, Optional, Tuple, Union
+
 import torch
-from torch import Tensor
-from typing import Any, List, Optional, Tuple, Union, Mapping, Iterable
-from torch import distributed as torch_dist
+from torch import distributed as torch_dist, Tensor
 from torch.distributed import ProcessGroup
 
 
@@ -193,10 +194,11 @@ def get_data_device(data: Union[Tensor, Mapping, Iterable]) -> torch.device:
             else:
                 if cur != pre:
                     raise ValueError(
-                        'device type in data should be consistent, but got '
-                        f'{cur} and {pre}')
+                        "device type in data should be consistent, but got "
+                        f"{cur} and {pre}"
+                    )
         if pre is None:
-            raise ValueError('data should not be empty.')
+            raise ValueError("data should not be empty.")
         return pre
     elif isinstance(data, Iterable) and not isinstance(data, str):
         pre = None
@@ -207,14 +209,16 @@ def get_data_device(data: Union[Tensor, Mapping, Iterable]) -> torch.device:
             else:
                 if cur != pre:
                     raise ValueError(
-                        'device type in data should be consistent, but got '
-                        f'{cur} and {pre}')
+                        "device type in data should be consistent, but got "
+                        f"{cur} and {pre}"
+                    )
         if pre is None:
-            raise ValueError('data should not be empty.')
+            raise ValueError("data should not be empty.")
         return pre
     else:
-        raise TypeError('data should be a Tensor, sequence of tensor or dict, '
-                        f'but got {data}')
+        raise TypeError(
+            "data should be a Tensor, sequence of tensor or dict, " f"but got {data}"
+        )
 
 
 def get_backend(group: Optional[ProcessGroup] = None) -> Optional[str]:
@@ -254,25 +258,27 @@ def get_comm_device(group: Optional[ProcessGroup] = None) -> torch.device:
         torch.device: The device of backend.
     """
     backend = get_backend(group)
-    if backend == 'hccl':
+    if backend == "hccl":
         import torch_npu  # noqa: F401
-        return torch.device('npu', torch.npu.current_device())
+
+        return torch.device("npu", torch.npu.current_device())
     elif backend == torch_dist.Backend.NCCL:
-        return torch.device('cuda', torch.cuda.current_device())
-    elif backend == 'cncl':
+        return torch.device("cuda", torch.cuda.current_device())
+    elif backend == "cncl":
         import torch_mlu  # noqa: F401
-        return torch.device('mlu', torch.mlu.current_device())
-    elif backend == 'smddp':
-        return torch.device('cuda', torch.cuda.current_device())
+
+        return torch.device("mlu", torch.mlu.current_device())
+    elif backend == "smddp":
+        return torch.device("cuda", torch.cuda.current_device())
     else:
         # GLOO and MPI backends use cpu device by default
-        return torch.device('cpu')
+        return torch.device("cpu")
 
 
 def cast_data_device(
     data: Union[Tensor, Mapping, Iterable],
     device: torch.device,
-    out: Optional[Union[Tensor, Mapping, Iterable]] = None
+    out: Optional[Union[Tensor, Mapping, Iterable]] = None,
 ) -> Union[Tensor, Mapping, Iterable]:
     """Recursively convert Tensor in ``data`` to ``device``.
 
@@ -290,11 +296,12 @@ def cast_data_device(
     if out is not None:
         if type(data) != type(out):
             raise TypeError(
-                'out should be the same type with data, but got data is '
-                f'{type(data)} and out is {type(data)}')
+                "out should be the same type with data, but got data is "
+                f"{type(data)} and out is {type(data)}"
+            )
 
         if isinstance(out, set):
-            raise TypeError('out should not be a set')
+            raise TypeError("out should not be a set")
 
     if isinstance(data, Tensor):
         if get_data_device(data) == device:
@@ -313,24 +320,28 @@ def cast_data_device(
             data_len = len(data)
             out_len = len(out)  # type: ignore
             if data_len != out_len:
-                raise ValueError('length of data and out should be same, '
-                                 f'but got {data_len} and {out_len}')
+                raise ValueError(
+                    "length of data and out should be same, "
+                    f"but got {data_len} and {out_len}"
+                )
 
             for k, v in data.items():
-                data_on_device[k] = cast_data_device(v, device,
-                                                     out[k])  # type: ignore
+                data_on_device[k] = cast_data_device(v, device, out[k])  # type: ignore
         else:
             for k, v in data.items():
                 data_on_device[k] = cast_data_device(v, device)
 
         if len(data_on_device) == 0:
-            raise ValueError('data should not be empty')
+            raise ValueError("data should not be empty")
 
         # To ensure the type of output as same as input, we use `type(data)`
         # to wrap the output
         return type(data)(data_on_device)  # type: ignore
-    elif isinstance(data, Iterable) and not isinstance(
-            data, str) and not isinstance(data, np.ndarray):
+    elif (
+        isinstance(data, Iterable)
+        and not isinstance(data, str)
+        and not isinstance(data, np.ndarray)
+    ):
         data_on_device = []
         if out is not None:
             for v1, v2 in zip(data, out):
@@ -340,17 +351,16 @@ def cast_data_device(
                 data_on_device.append(cast_data_device(v, device))
 
         if len(data_on_device) == 0:
-            raise ValueError('data should not be empty')
+            raise ValueError("data should not be empty")
 
         return type(data)(data_on_device)  # type: ignore
     else:
-        raise TypeError('data should be a Tensor, list of tensor or dict, '
-                        f'but got {data}')
+        raise TypeError(
+            "data should be a Tensor, list of tensor or dict, " f"but got {data}"
+        )
 
 
-def broadcast(data: Tensor,
-              src: int = 0,
-              group: Optional[ProcessGroup] = None) -> None:
+def broadcast(data: Tensor, src: int = 0, group: Optional[ProcessGroup] = None) -> None:
     """Broadcast the data from ``src`` process to the whole group.
 
     ``data`` must have the same number of elements in all processes
@@ -404,9 +414,9 @@ def broadcast(data: Tensor,
             cast_data_device(data_on_device, input_device, data)
 
 
-def broadcast_object_list(data: List[Any],
-                          src: int = 0,
-                          group: Optional[Any] = None) -> None:
+def broadcast_object_list(
+    data: List[Any], src: int = 0, group: Optional[Any] = None
+) -> None:
     """Broadcasts picklable objects in ``object_list`` to the whole group.
     Similar to :func:`broadcast`, but Python objects can be passed in. Note
     that all objects in ``object_list`` must be picklable in order to be
@@ -462,14 +472,13 @@ def broadcast_object_list(data: List[Any],
     if get_world_size() > 1:
         if group is None:
             group = get_default_group()
-            
+
         torch_dist.broadcast_object_list(data, src, group)
 
 
-def collect_results(results: list,
-                    size: int,
-                    device: str = 'cpu',
-                    tmpdir: Optional[str] = None) -> Optional[list]:
+def collect_results(
+    results: list, size: int, device: str = "cpu", tmpdir: Optional[str] = None
+) -> Optional[list]:
     """Collected results in distributed environments.
 
     Args:
@@ -501,11 +510,12 @@ def collect_results(results: list,
         ['foo', 24, {1: 2}, {'a': 'b'}]  # rank 0
         None  # rank 1
     """
-    if device not in ['gpu', 'cpu', 'npu']:
+    if device not in ["gpu", "cpu", "npu"]:
         raise NotImplementedError(
-            f"device must be 'cpu' , 'gpu' or 'npu', but got {device}")
+            f"device must be 'cpu' , 'gpu' or 'npu', but got {device}"
+        )
 
-    if device == 'gpu' or device == 'npu':
+    if device == "gpu" or device == "npu":
         return _collect_results_device(results, size)
     else:
         return collect_results_cpu(results, size, tmpdir)
@@ -535,9 +545,9 @@ def _collect_results_device(result_part: list, size: int) -> Optional[list]:
         return None
 
 
-def collect_results_cpu(result_part: list,
-                        size: int,
-                        tmpdir: Optional[str] = None) -> Optional[list]:
+def collect_results_cpu(
+    result_part: list, size: int, tmpdir: Optional[str] = None
+) -> Optional[list]:
     """Collect results under cpu mode.
 
     On cpu mode, this function will save the results on different gpus to
@@ -578,20 +588,19 @@ def collect_results_cpu(result_part: list,
     if tmpdir is None:
         MAX_LEN = 512
         # 32 is whitespace
-        dir_tensor = torch.full((MAX_LEN, ), 32, dtype=torch.uint8)
+        dir_tensor = torch.full((MAX_LEN,), 32, dtype=torch.uint8)
         if rank == 0:
-            os.makedirs('.dist_test', exist_ok=True)
-            tmpdir = tempfile.mkdtemp(dir='.dist_test')
-            tmpdir = torch.tensor(
-                bytearray(tmpdir.encode()), dtype=torch.uint8)
-            dir_tensor[:len(tmpdir)] = tmpdir
+            os.makedirs(".dist_test", exist_ok=True)
+            tmpdir = tempfile.mkdtemp(dir=".dist_test")
+            tmpdir = torch.tensor(bytearray(tmpdir.encode()), dtype=torch.uint8)
+            dir_tensor[: len(tmpdir)] = tmpdir
         broadcast(dir_tensor, 0)
         tmpdir = dir_tensor.numpy().tobytes().decode().rstrip()
     else:
         os.makedirs(tmpdir, exist_ok=True)
 
     # dump the part result to the dir
-    with open(os.path.join(tmpdir, f'part_{rank}.pkl'), 'wb') as f:  # type: ignore
+    with open(os.path.join(tmpdir, f"part_{rank}.pkl"), "wb") as f:  # type: ignore
         pickle.dump(result_part, f, protocol=2)
 
     barrier()
@@ -602,15 +611,16 @@ def collect_results_cpu(result_part: list,
         # load results of all parts from tmp dir
         part_list = []
         for i in range(world_size):
-            path = os.path.join(tmpdir, f'part_{i}.pkl')  # type: ignore
+            path = os.path.join(tmpdir, f"part_{i}.pkl")  # type: ignore
             if not os.path.exists(path):
                 raise FileNotFoundError(
-                    f'{tmpdir} is not an shared directory for '
-                    f'rank {i}, please make sure {tmpdir} is a shared '
-                    'directory for all ranks!')
-            with open(path, 'rb') as f:
+                    f"{tmpdir} is not an shared directory for "
+                    f"rank {i}, please make sure {tmpdir} is a shared "
+                    "directory for all ranks!"
+                )
+            with open(path, "rb") as f:
                 part_list.append(pickle.load(f))
-        # With webdataset, some gpus don't get any data 
+        # With webdataset, some gpus don't get any data
         # They don't get a shard with nodesplitter.
         # Hence, the zip below can fail, since some elements are length 0.
         # So, we're only going to keep the non-zero ones. This is hacky,

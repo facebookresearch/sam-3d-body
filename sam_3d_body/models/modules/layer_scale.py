@@ -1,4 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
+
 from typing import Union
 
 import torch
@@ -19,20 +20,24 @@ class LayerScale(nn.Module):
              (B, N, C) format data respectively. Defaults to 'channels_last'.
     """
 
-    def __init__(self,
-                 dim: int,
-                 layer_scale_init_value: Union[float, torch.Tensor] = 1e-5,
-                 inplace: bool = False,
-                 data_format: str = 'channels_last'):
+    def __init__(
+        self,
+        dim: int,
+        layer_scale_init_value: Union[float, torch.Tensor] = 1e-5,
+        inplace: bool = False,
+        data_format: str = "channels_last",
+    ):
         super().__init__()
-        assert data_format in ('channels_last', 'channels_first'), \
-            "'data_format' could only be channels_last or channels_first."
+        assert data_format in (
+            "channels_last",
+            "channels_first",
+        ), "'data_format' could only be channels_last or channels_first."
         self.inplace = inplace
         self.data_format = data_format
         self.weight = nn.Parameter(torch.ones(dim) * layer_scale_init_value)
 
     def forward(self, x):
-        if self.data_format == 'channels_first':
+        if self.data_format == "channels_first":
             if self.inplace:
                 return x.mul_(self.weight.view(-1, 1, 1))
             else:

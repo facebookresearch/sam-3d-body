@@ -1,6 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
-import torch
 
+import torch
 from torch import nn
 
 
@@ -21,8 +21,6 @@ class Dinov3Backbone(nn.Module):
         )
         self.patch_size = self.encoder.patch_size
         self.embed_dim = self.embed_dims = self.encoder.embed_dim
-
-        self.encoder.mask_token  # Unused, and it causes issues.
 
     def forward(self, x, extra_embed=None):
         """

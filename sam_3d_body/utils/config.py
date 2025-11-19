@@ -1,8 +1,10 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
+
 from typing import Dict
-from yacs.config import CfgNode as CN
-from omegaconf import OmegaConf, DictConfig, ListConfig
+
+from omegaconf import DictConfig, ListConfig, OmegaConf
 from omegaconf.errors import InterpolationResolutionError
+from yacs.config import CfgNode as CN
 
 
 # OmegaConf support for variable interpolation (e.g. ${paths.MODEL}/weights.ckpt)

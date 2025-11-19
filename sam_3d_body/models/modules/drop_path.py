@@ -1,11 +1,12 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
+
 import torch
 import torch.nn as nn
 
 
-def drop_path(x: torch.Tensor,
-              drop_prob: float = 0.,
-              training: bool = False) -> torch.Tensor:
+def drop_path(
+    x: torch.Tensor, drop_prob: float = 0.0, training: bool = False
+) -> torch.Tensor:
     """Drop paths (Stochastic Depth) per sample (when applied in main path of
     residual blocks).
 
@@ -16,9 +17,8 @@ def drop_path(x: torch.Tensor,
         return x
     keep_prob = 1 - drop_prob
     # handle tensors with different dimensions, not just 4D tensors.
-    shape = (x.shape[0], ) + (1, ) * (x.ndim - 1)
-    random_tensor = keep_prob + torch.rand(
-        shape, dtype=x.dtype, device=x.device)
+    shape = (x.shape[0],) + (1,) * (x.ndim - 1)
+    random_tensor = keep_prob + torch.rand(shape, dtype=x.dtype, device=x.device)
     output = x.div(keep_prob) * random_tensor.floor()
     return output
 
@@ -40,4 +40,3 @@ class DropPath(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return drop_path(x, self.drop_prob, self.training)
-

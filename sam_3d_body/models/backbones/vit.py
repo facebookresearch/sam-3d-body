@@ -1,4 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
+
 from functools import partial
 
 import torch
@@ -104,7 +105,6 @@ def vit512_384(cfg):
         frozen_stages=cfg.MODEL.BACKBONE.get("FROZEN_STAGES", -1),
         flash_attn=cfg.MODEL.BACKBONE.get("FLASH_ATTN", False),
     )
-
 
 
 def get_abs_pos(abs_pos, h, w, ori_h, ori_w, has_cls_token=True):

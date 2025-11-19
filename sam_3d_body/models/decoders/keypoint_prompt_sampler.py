@@ -1,7 +1,9 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
+
+import random
 from abc import ABC, abstractmethod
 from typing import Dict, List
-import random
+
 import torch
 
 from omegaconf import DictConfig
@@ -19,7 +21,9 @@ def build_keypoint_sampler(sampler_cfg, prompt_keypoints, keybody_idx):
 
 class BaseKeypointSampler(ABC):
     @abstractmethod
-    def sample(self, gt_keypoints: torch.Tensor, pred_keypoints: torch.Tensor, is_train: bool) -> torch.Tensor:
+    def sample(
+        self, gt_keypoints: torch.Tensor, pred_keypoints: torch.Tensor, is_train: bool
+    ) -> torch.Tensor:
         pass
 
     def _get_worst_keypoint(self, distances, keypoint_list):
@@ -67,9 +71,7 @@ class KeypointSamplerV1(BaseKeypointSampler):
         self.prompt_keypoints = prompt_keypoints
         self._keybody_idx = keybody_idx
         self._non_keybody_idx = [
-            idx
-            for idx in self.prompt_keypoints
-            if idx not in self._keybody_idx
+            idx for idx in self.prompt_keypoints if idx not in self._keybody_idx
         ]
 
         self.keybody_ratio = sampler_cfg.get("KEYBODY_RATIO", 0.8)
@@ -90,8 +92,7 @@ class KeypointSamplerV1(BaseKeypointSampler):
         # (2) both the gt and pred are outside of the image
         mask_1 = gt_keypoints_2d[:, :, -1] < 0.5
         mask_2 = (
-            (gt_keypoints_2d[:, :, :2] > 0.5) |
-            (gt_keypoints_2d[:, :, :2] < -0.5)
+            (gt_keypoints_2d[:, :, :2] > 0.5) | (gt_keypoints_2d[:, :, :2] < -0.5)
         ).any(dim=-1)
 
         # Elements to be ignored
@@ -99,16 +100,18 @@ class KeypointSamplerV1(BaseKeypointSampler):
             mask = mask_1 | mask_2
             # print_base = "positive"
         else:
-            mask_3 =(
-                (pred_keypoints_2d[:, :, :2] > 0.5) |
-                (pred_keypoints_2d[:, :, :2] < -0.5)
+            mask_3 = (
+                (pred_keypoints_2d[:, :, :2] > 0.5)
+                | (pred_keypoints_2d[:, :, :2] < -0.5)
             ).any(dim=-1)
             # To include negative prompts
             mask = mask_1 | (mask_2 & mask_3)
             # print_base = "negative"
 
         # Get pairwise distances with shape [K, B]
-        distances = self._masked_distance(pred_keypoints_2d, gt_keypoints_2d[..., :2], mask)
+        distances = self._masked_distance(
+            pred_keypoints_2d, gt_keypoints_2d[..., :2], mask
+        )
 
         batch_size = distances.shape[1]
         keypoints_prompt = []
@@ -150,12 +153,18 @@ class KeypointSamplerV1(BaseKeypointSampler):
                 if torch.any(cur_point[:2] > 0.5) or torch.any(cur_point[:2] < -0.5):
                     # Negative prompt --> indicating the predicted keypoint is incorrect
                     cur_point[:2] = pred_keypoints_2d[b, keypoint_idx][:2]
-                    cur_point = torch.clamp(cur_point + 0.5, min=0.0, max=1.0)  # shift from [-0.5, 0.5] to [0, 1]
+                    cur_point = torch.clamp(
+                        cur_point + 0.5, min=0.0, max=1.0
+                    )  # shift from [-0.5, 0.5] to [0, 1]
                     cur_point[-1] = -1
                     # print_str += "_negative"
                 else:
-                    cur_point = torch.clamp(cur_point + 0.5, min=0.0, max=1.0)  # shift from [-0.5, 0.5] to [0, 1]
-                    cur_point[-1] = self.prompt_keypoints[keypoint_idx]  # map to prompt_idx
+                    cur_point = torch.clamp(
+                        cur_point + 0.5, min=0.0, max=1.0
+                    )  # shift from [-0.5, 0.5] to [0, 1]
+                    cur_point[-1] = self.prompt_keypoints[
+                        keypoint_idx
+                    ]  # map to prompt_idx
                     # print_str += "_positive"
             else:
                 cur_point = torch.zeros(3).to(gt_keypoints_2d)

@@ -1,8 +1,10 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
-from typing import Dict, Union, Optional
-import numpy as np
-import cv2
+
 import os
+from typing import Dict, Optional, Union
+
+import cv2
+import numpy as np
 from detectron2.config import LazyConfig
 from omegaconf import OmegaConf
 
@@ -13,9 +15,9 @@ def draw_text(
     positions: np.ndarray,
     image_size: Optional[tuple] = None,
     font_size: Optional[int] = None,
-    color: Union[str, tuple] = 'g',
-    vertical_alignment: str = 'top',
-    horizontal_alignment: str = 'left',
+    color: Union[str, tuple] = "g",
+    vertical_alignment: str = "top",
+    horizontal_alignment: str = "left",
 ):
     """Draw single or multiple text boxes.
 
@@ -46,25 +48,28 @@ def draw_text(
     )
 
     x = int(positions[0])
-    if horizontal_alignment == 'right':
+    if horizontal_alignment == "right":
         x = max(0, x - text_size[0])
     y = int(positions[1])
-    if vertical_alignment == 'top':
+    if vertical_alignment == "top":
         y = y + text_size[1]
         if image_size is not None:
             y = min(image_size[1], y)
 
     return cv2.putText(
-        image, texts, (x, y), 
-        cv2.FONT_HERSHEY_SIMPLEX, font_scale, color, thickness - 1
+        image, texts, (x, y), cv2.FONT_HERSHEY_SIMPLEX, font_scale, color, thickness - 1
     )
 
 
-def draw_box(img, bbox=[], text="", box_color=(0, 255, 0), 
-             text_color=(0, 255, 0), 
-             font_scale=0.7, 
-             font_thickness=1,
-             ):
+def draw_box(
+    img,
+    bbox=[],
+    text="",
+    box_color=(0, 255, 0),
+    text_color=(0, 255, 0),
+    font_scale=0.7,
+    font_thickness=1,
+):
     # BOX_MODE is XYXY_ABS for cv2.rectangle.
     pt1 = (int(bbox[0]), int(bbox[1]))
     pt2 = (int(bbox[2]), int(bbox[3]))
@@ -185,11 +190,11 @@ def parse_pose_metainfo(metainfo: Union[str, Dict]):
         metainfo = OmegaConf.to_container(LazyConfig.load(metainfo).pose_info)
 
     # check data integrity
-    assert 'pose_format' in metainfo
-    assert 'keypoint_info' in metainfo
-    assert 'skeleton_info' in metainfo
-    assert 'joint_weights' in metainfo
-    assert 'sigmas' in metainfo
+    assert "pose_format" in metainfo
+    assert "keypoint_info" in metainfo
+    assert "skeleton_info" in metainfo
+    assert "joint_weights" in metainfo
+    assert "sigmas" in metainfo
 
     # parse metainfo
     parsed = dict(
@@ -209,64 +214,67 @@ def parse_pose_metainfo(metainfo: Union[str, Dict]):
         sigmas=None,
     )
 
-    parsed['pose_format'] = metainfo['pose_format']
+    parsed["pose_format"] = metainfo["pose_format"]
 
-    if 'remove_teeth' in metainfo:
-        parsed['remove_teeth'] = metainfo['remove_teeth']
+    if "remove_teeth" in metainfo:
+        parsed["remove_teeth"] = metainfo["remove_teeth"]
 
-    if 'min_visible_keypoints' in metainfo:
-        parsed['min_visible_keypoints'] = metainfo['min_visible_keypoints']
+    if "min_visible_keypoints" in metainfo:
+        parsed["min_visible_keypoints"] = metainfo["min_visible_keypoints"]
 
-    if 'teeth_keypoint_ids' in metainfo:
-        parsed['teeth_keypoint_ids'] = metainfo['teeth_keypoint_ids']
+    if "teeth_keypoint_ids" in metainfo:
+        parsed["teeth_keypoint_ids"] = metainfo["teeth_keypoint_ids"]
 
-    if 'coco_wholebody_to_goliath_mapping' in metainfo:
-        parsed['coco_wholebody_to_goliath_mapping'] = \
-            metainfo['coco_wholebody_to_goliath_mapping']
+    if "coco_wholebody_to_goliath_mapping" in metainfo:
+        parsed["coco_wholebody_to_goliath_mapping"] = metainfo[
+            "coco_wholebody_to_goliath_mapping"
+        ]
 
-    if 'coco_wholebody_to_goliath_keypoint_info' in metainfo:
-        parsed['coco_wholebody_to_goliath_keypoint_info'] = \
-            metainfo['coco_wholebody_to_goliath_keypoint_info']
+    if "coco_wholebody_to_goliath_keypoint_info" in metainfo:
+        parsed["coco_wholebody_to_goliath_keypoint_info"] = metainfo[
+            "coco_wholebody_to_goliath_keypoint_info"
+        ]
 
     # parse keypoint information
-    parsed['num_keypoints'] = len(metainfo['keypoint_info'])
+    parsed["num_keypoints"] = len(metainfo["keypoint_info"])
 
-    for kpt_id, kpt in metainfo['keypoint_info'].items():
-        kpt_name = kpt['name']
-        parsed['keypoint_id2name'][kpt_id] = kpt_name
-        parsed['keypoint_name2id'][kpt_name] = kpt_id
-        parsed['keypoint_colors'].append(kpt.get('color', [255, 128, 0]))
+    for kpt_id, kpt in metainfo["keypoint_info"].items():
+        kpt_name = kpt["name"]
+        parsed["keypoint_id2name"][kpt_id] = kpt_name
+        parsed["keypoint_name2id"][kpt_name] = kpt_id
+        parsed["keypoint_colors"].append(kpt.get("color", [255, 128, 0]))
 
-        kpt_type = kpt.get('type', '')
-        if kpt_type == 'upper':
-            parsed['upper_body_ids'].append(kpt_id)
-        elif kpt_type == 'lower':
-            parsed['lower_body_ids'].append(kpt_id)
+        kpt_type = kpt.get("type", "")
+        if kpt_type == "upper":
+            parsed["upper_body_ids"].append(kpt_id)
+        elif kpt_type == "lower":
+            parsed["lower_body_ids"].append(kpt_id)
 
-        swap_kpt = kpt.get('swap', '')
-        if swap_kpt == kpt_name or swap_kpt == '':
-            parsed['flip_indices'].append(kpt_name)
+        swap_kpt = kpt.get("swap", "")
+        if swap_kpt == kpt_name or swap_kpt == "":
+            parsed["flip_indices"].append(kpt_name)
         else:
-            parsed['flip_indices'].append(swap_kpt)
+            parsed["flip_indices"].append(swap_kpt)
             pair = (swap_kpt, kpt_name)
-            if pair not in parsed['flip_pairs']:
-                parsed['flip_pairs'].append(pair)
+            if pair not in parsed["flip_pairs"]:
+                parsed["flip_pairs"].append(pair)
 
     # parse skeleton information
-    parsed['num_skeleton_links'] = len(metainfo['skeleton_info'])
-    for _, sk in metainfo['skeleton_info'].items():
-        parsed['skeleton_links'].append(sk['link'])
-        parsed['skeleton_link_colors'].append(sk.get('color', [96, 96, 255]))
+    parsed["num_skeleton_links"] = len(metainfo["skeleton_info"])
+    for _, sk in metainfo["skeleton_info"].items():
+        parsed["skeleton_links"].append(sk["link"])
+        parsed["skeleton_link_colors"].append(sk.get("color", [96, 96, 255]))
 
     # parse extra information
-    parsed['dataset_keypoint_weights'] = np.array(
-        metainfo['joint_weights'], dtype=np.float32)
-    parsed['sigmas'] = np.array(metainfo['sigmas'], dtype=np.float32)
+    parsed["dataset_keypoint_weights"] = np.array(
+        metainfo["joint_weights"], dtype=np.float32
+    )
+    parsed["sigmas"] = np.array(metainfo["sigmas"], dtype=np.float32)
 
-    if 'stats_info' in metainfo:
-        parsed['stats_info'] = {}
-        for name, val in metainfo['stats_info'].items():
-            parsed['stats_info'][name] = np.array(val, dtype=np.float32)
+    if "stats_info" in metainfo:
+        parsed["stats_info"] = {}
+        for name, val in metainfo["stats_info"].items():
+            parsed["stats_info"][name] = np.array(val, dtype=np.float32)
 
     # formatting
     def _map(src, mapping: dict):
@@ -276,16 +284,19 @@ def parse_pose_metainfo(metainfo: Union[str, Dict]):
         else:
             return mapping[src]
 
-    parsed['flip_pairs'] = _map(
-        parsed['flip_pairs'], mapping=parsed['keypoint_name2id'])
-    parsed['flip_indices'] = _map(
-        parsed['flip_indices'], mapping=parsed['keypoint_name2id'])
-    parsed['skeleton_links'] = _map(
-        parsed['skeleton_links'], mapping=parsed['keypoint_name2id'])
+    parsed["flip_pairs"] = _map(
+        parsed["flip_pairs"], mapping=parsed["keypoint_name2id"]
+    )
+    parsed["flip_indices"] = _map(
+        parsed["flip_indices"], mapping=parsed["keypoint_name2id"]
+    )
+    parsed["skeleton_links"] = _map(
+        parsed["skeleton_links"], mapping=parsed["keypoint_name2id"]
+    )
 
-    parsed['keypoint_colors'] = np.array(
-        parsed['keypoint_colors'], dtype=np.uint8)
-    parsed['skeleton_link_colors'] = np.array(
-        parsed['skeleton_link_colors'], dtype=np.uint8)
+    parsed["keypoint_colors"] = np.array(parsed["keypoint_colors"], dtype=np.uint8)
+    parsed["skeleton_link_colors"] = np.array(
+        parsed["skeleton_link_colors"], dtype=np.uint8
+    )
 
     return parsed

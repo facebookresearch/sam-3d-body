@@ -1,13 +1,13 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
+
 from .keypoint_prompt_sampler import build_keypoint_sampler
 from .prompt_encoder import PromptEncoder
 from .promptable_decoder import PromptableDecoder
 
 
-
 def build_decoder(cfg, context_dim=None):
     from .promptable_decoder import PromptableDecoder
-    
+
     if cfg.TYPE == "sam":
         return PromptableDecoder(
             dims=cfg.DIM,

@@ -1,12 +1,14 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
+
 from typing import Optional
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .layer_scale import LayerScale
 from .drop_path import DropPath
+
+from .layer_scale import LayerScale
 
 
 class SwiGLUFFN(nn.Module):
@@ -20,9 +22,9 @@ class SwiGLUFFN(nn.Module):
         embed_dims: int,
         feedforward_channels: Optional[int] = None,
         out_dims: Optional[int] = None,
-        layer_scale_init_value: float = 0.,
+        layer_scale_init_value: float = 0.0,
         bias: bool = True,
-        drop_path_rate: float = 0.,
+        drop_path_rate: float = 0.0,
         norm_layer: nn.Module = nn.LayerNorm,
         add_identity: bool = True,
     ) -> None:
@@ -39,16 +41,17 @@ class SwiGLUFFN(nn.Module):
 
         if layer_scale_init_value > 0:
             self.gamma2 = LayerScale(
-                dim=embed_dims, layer_scale_init_value=layer_scale_init_value)
+                dim=embed_dims, layer_scale_init_value=layer_scale_init_value
+            )
         else:
             self.gamma2 = nn.Identity()
 
         self.dropout_layer = DropPath(drop_path_rate)
         self.add_identity = add_identity
 
-    def forward(self,
-                x: torch.Tensor,
-                identity: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def forward(
+        self, x: torch.Tensor, identity: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
         x12 = self.w12(x)
         x1, x2 = x12.chunk(2, dim=-1)
         hidden = F.silu(x1) * x2
@@ -78,7 +81,7 @@ class SwiGLUFFNFused(SwiGLUFFN):
         embed_dims: int,
         feedforward_channels: Optional[int] = None,
         out_dims: Optional[int] = None,
-        layer_scale_init_value: float = 0.,
+        layer_scale_init_value: float = 0.0,
         bias: bool = True,
     ) -> None:
         out_dims = out_dims or embed_dims

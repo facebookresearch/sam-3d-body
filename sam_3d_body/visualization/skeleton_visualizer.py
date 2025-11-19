@@ -1,4 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
+
 from typing import Dict, Optional, Tuple, Union
 
 import cv2
