@@ -19,12 +19,12 @@ LIGHT_BLUE = (0.65098039, 0.74117647, 0.85882353)
 
 def setup_sam_3d_body(
     hf_repo_id: str = "facebook/sam-3d-body-vith",
-    detector_path: str = "https://dl.fbaipublicfiles.com/detectron2/ViTDet/COCO/cascade_mask_rcnn_vitdet_h/f328730692/model_final_f05665.pkl",
-    segmentor_path: Optional[str] = None,
-    fov_path: str = "Ruicheng/moge-2-vitl-normal",
     detector_name: str = "vitdet",
     segmentor_name: str = "sam2",
     fov_name: str = "moge2",
+    detector_path: Optional[str] = None,
+    segmentor_path: Optional[str] = None,
+    fov_path: Optional[str] = None,
     device: Optional[str] = None,
 ):
     """
@@ -32,12 +32,12 @@ def setup_sam_3d_body(
 
     Args:
         hf_repo_id: HuggingFace repository ID for the model
-        detector_path: URL or path for human detector model (default: vitdet weights URL)
-        segmentor_path: Path to human segmentor model (optional)
-        fov_path: path for FOV estimator (default: "Ruicheng/moge-2-vitl-normal")
         detector_name: Name of detector to use (default: "vitdet")
         segmentor_name: Name of segmentor to use (default: "sam2")
         fov_name: Name of FOV estimator to use (default: "moge2")
+        detector_path: URL or path for human detector model
+        segmentor_path: Path to human segmentor model (optional)
+        fov_path: path for FOV estimator
         device: Device to use (default: auto-detect cuda/cpu)
 
     Returns:
@@ -55,11 +55,11 @@ def setup_sam_3d_body(
     # Initialize optional components
     human_detector, human_segmentor, fov_estimator = None, None, None
 
-    if detector_path:
-        print(f"Loading human detector from {detector_path}...")
+    if detector_name:
+        print(f"Loading human detector from {detector_name}...")
         from tools.build_detector import HumanDetector
         human_detector = HumanDetector(
-            name=detector_name, device=device, path=detector_path
+            name=detector_name, device=device
         )
 
     if segmentor_path:
@@ -69,11 +69,11 @@ def setup_sam_3d_body(
             name=segmentor_name, device=device, path=segmentor_path
         )
 
-    if fov_path:
-        print(f"Loading FOV estimator from {fov_path}...")
+    if fov_name:
+        print(f"Loading FOV estimator from {fov_name}...")
         from tools.build_fov_estimator import FOVEstimator
         fov_estimator = FOVEstimator(
-            name=fov_name, device=device, path=fov_path
+            name=fov_name, device=device
         )
 
     # Create estimator wrapper
