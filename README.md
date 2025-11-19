@@ -2,23 +2,23 @@
 
 SAM 3D Body is one part of SAM 3D, a pair of models for robust full-body human mesh recovery. If you’re looking for SAM 3D Objects, [click here](https://github.com/facebookresearch/sam-3d-objects).
 
-# SAM 3D Body: Robust Full-Body Human Mesh Recovery 
+# SAM 3D Body: Robust Full-Body Human Mesh Recovery
 
-[Xitong Yang](https://scholar.google.com/citations?user=k0qC-7AAAAAJ&hl=en)\*, [Devansh Kukreja](https://www.linkedin.com/in/devanshkukreja)\*, [Don Pinkus](https://www.linkedin.com/in/don-pinkus-9140702a)\*, [Anushka Sagar](https://www.linkedin.com/in/anushkasagar), [Taosha Fan](https://scholar.google.com/citations?user=3PJeg1wAAAAJ&hl=en), [Jinhyung Park](https://jindapark.github.io/), [Soyong Shin](https://yohanshin.github.io/), [Jinkun Cao](https://www.jinkuncao.com/), [Jiawei Liu](https://jia-wei-liu.github.io/), [Nicolas Ugrinovic](https://www.iri.upc.edu/people/nugrinovic/), [Matt Feiszli](https://scholar.google.com/citations?user=A-wA73gAAAAJ&hl=en&oi=ao)†, [Jitendra Malik](https://people.eecs.berkeley.edu/~malik/)†, [Piotr Dollar](https://pdollar.github.io/)†, [Kris Kitani](https://kriskitani.github.io/)†
+[Xitong Yang](https://scholar.google.com/citations?user=k0qC-7AAAAAJ&hl=en)\*, [Devansh Kukreja](https://www.linkedin.com/in/devanshkukreja)\*, [Don Pinkus](https://www.linkedin.com/in/don-pinkus-9140702a)\*, [Anushka Sagar](https://www.linkedin.com/in/anushkasagar), [Taosha Fan](https://scholar.google.com/citations?user=3PJeg1wAAAAJ&hl=en), [Jinhyung Park](https://jindapark.github.io/)⚬, [Soyong Shin](https://yohanshin.github.io/)⚬, [Jinkun Cao](https://www.jinkuncao.com/), [Jiawei Liu](https://jia-wei-liu.github.io/), [Nicolas Ugrinovic](https://www.iri.upc.edu/people/nugrinovic/), [Matt Feiszli](https://scholar.google.com/citations?user=A-wA73gAAAAJ&hl=en&oi=ao)†, [Jitendra Malik](https://people.eecs.berkeley.edu/~malik/)†, [Piotr Dollar](https://pdollar.github.io/)†, [Kris Kitani](https://kriskitani.github.io/)†
 
 ***Meta Superintelligence Labs***
 
-*Core contributors, †Project leads
+*Core Contributor,  ⚬Intern, †Project Lead
 
-[[`Paper`](https://ai.meta.com/research/publications/sam-3d-body/)] [[`Code`](https://github.com/facebookresearch/sam-3d-body)] [[`Website`](https://ai.meta.com/sam3d/)] [[`Demo`](https://www.aidemos.meta.com/segment-anything/editor/convert-body-to-3d)] [[`<Dataset>`](https://huggingface.co/datasets/facebook/sam-3d-body-dataset)] [[`Blog`](https://ai.meta.com/blog/sam-3d/)] [[`BibTeX`](#citing-sam-3d-body)]
+[[`Paper`](https://ai.meta.com/research/publications/sam-3d-body/)] [[`Code`](https://github.com/facebookresearch/sam-3d-body)] [[`Website`](https://ai.meta.com/sam3d/)] [[`Demo`](https://www.aidemos.meta.com/segment-anything/editor/convert-body-to-3d)] [[`Dataset`](https://huggingface.co/datasets/facebook/sam-3d-body-dataset)] [[`Blog`](https://ai.meta.com/blog/sam-3d/)] [[`BibTeX`](#citing-sam-3d-body)]
 
 ![SAM 3D Body Model Architecture](assets/model_diagram.png?raw=true)
 
-**SAM 3D Body (3DB)** is a robust promptable foundation model for single-image full-body 3D human mesh recovery (HMR). Our method emphasizes data quality and diversity to maximize performance. We utilize the Momentum Human Rig (MHR), a new parametric mesh representation that decouples skeletal pose and body shape for improved accuracy and interpretability.
+**SAM 3D Body (3DB)** is a promptable model for single-image full-body 3D human mesh recovery (HMR). Our method demonstrates state-of-the-art performance, with strong generalization and consistent accuracy in diverse in-the-wild conditions. 3DB estimates the human pose of the body, feet, and hands based on the [Momentum Human Rig](https://github.com/facebookresearch/MHR) (MHR), a new parametric mesh representation that decouples skeletal pose and body shape for improved accuracy and interpretability.
 
-3DB employs an encoder-decoder architecture and supports auxiliary prompts, including 2D keypoints and masks, enabling user-guided inference similar to the SAM family of models. We derive high-quality annotations from a multi-stage annotation pipeline using differentiable optimization, multi-view geometry, dense keypoint detection, and a data engine to collect and annotated data covering both common and rare poses across a wide range of viewpoints.
+3DB employs an encoder-decoder architecture and supports auxiliary prompts, including 2D keypoints and masks, enabling user-guided inference similar to the SAM family of models. Our model is trained on high-quality annotations from a multi-stage annotation pipeline using differentiable optimization, multi-view geometry, dense keypoint detection, and a data engine to collect and annotated data covering both common and rare poses across a wide range of viewpoints.
 
-## Visual Comparisons
+## Qualitative Results
 
 <table>
 <thead>
@@ -66,12 +66,12 @@ SAM 3D Body is one part of SAM 3D, a pair of models for robust full-body human m
 
 ## Latest updates
 
-**11/19/2025 -- Checkpoints Launched, Dataset Released, Web Demo and Paper are out**
+**11/19/2025** -- Checkpoints Launched, Dataset Released, Web Demo and Paper are out!
 
 ## Installation
-See [Install.md](INSTALL.md)
+See [Install.md](INSTALL.md) for instructions.
 
-## Usage - Inference
+## Getting Started
 
 Models can be loaded directly from [Hugging Face](https://huggingface.co/facebook):
 
@@ -110,7 +110,7 @@ The table below shows the performance of SAM 3D Body checkpoints released on 11/
 |   ViT-H<br /> ([config](https://huggingface.co/facebook/sam-3d-body-vith/blob/main/model_config.yaml), [checkpoint](https://huggingface.co/facebook/sam-3d-body-vith/blob/main/model.ckpt))    |     54.8   |         62.9         |       55.0        |        86.8       | 68.9 |  5.5
 
 ## SAM 3D Body Dataset
-The SAM 3D Body data is released in [Hugging Face](https://huggingface.co/datasets/facebook/sam-3d-body-dataset). Please follow the [instructions](./data/README.md) to download and process the data.
+The SAM 3D Body data is released on [Hugging Face](https://huggingface.co/datasets/facebook/sam-3d-body-dataset). Please follow the [instructions](./data/README.md) to download and process the data.
 
 ## SAM 3D Objects
 
@@ -129,7 +129,7 @@ See [contributing](CONTRIBUTING.md) and the [code of conduct](CODE_OF_CONDUCT.md
 ## Contributors
 
 The SAM 3D Body project was made possible with the help of many contributors:
-Vivian Lee, George Orlin, Matt Feiszli, Nikhila Ravi, Andrew Westbury, Jyun-Ting Song, Zejia Weng, Xizi Zhang, Yuting Ye, Federica Bogo, Ronald Mallet, Ahmed Osman, Rawal Khirodkar, Javier Romero, Carsten Stoll, Juan Carlos Guzman, Sofien Bouaziz, Yuan Dong, Su Zhaoen, Fabian Prada, Alexander Richard, Michael Zollhoefer, Roman Rädle, Sasha Mitts, Michelle Chan, Yael Yungster, Azita Shokrpour, Helen Klein, Mallika Malhotra, Ida Cheng, Eva Galper.
+Vivian Lee, George Orlin, Nikhila Ravi, Andrew Westbury, Jyun-Ting Song, Zejia Weng, Xizi Zhang, Yuting Ye, Federica Bogo, Ronald Mallet, Ahmed Osman, Rawal Khirodkar, Javier Romero, Carsten Stoll, Juan Carlos Guzman, Sofien Bouaziz, Yuan Dong, Su Zhaoen, Fabian Prada, Alexander Richard, Michael Zollhoefer, Roman Rädle, Sasha Mitts, Michelle Chan, Yael Yungster, Azita Shokrpour, Helen Klein, Mallika Malhotra, Ida Cheng, Eva Galper.
 
 ## Citing SAM 3D Body
 
