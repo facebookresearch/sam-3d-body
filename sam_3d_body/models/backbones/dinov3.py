@@ -12,9 +12,9 @@ class Dinov3Backbone(nn.Module):
         self.cfg = cfg
 
         self.encoder = torch.hub.load(
-            "/checkpoint/3po/model/dinov3/dinov3",
+            "facebookresearch/dinov3",
             self.name,
-            source="local",
+            source="github",
             pretrained=False,
             drop_path=self.cfg.MODEL.BACKBONE.DROP_PATH_RATE,
         )
