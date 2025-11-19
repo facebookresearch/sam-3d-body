@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 import os
 from .estimator import SAM3DBodyEstimator
 

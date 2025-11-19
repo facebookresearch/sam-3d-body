@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 import os
 
 if "PYOPENGL_PLATFORM" not in os.environ:

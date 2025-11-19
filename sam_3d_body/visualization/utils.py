@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 from typing import Dict, Union, Optional
 import numpy as np
 import cv2

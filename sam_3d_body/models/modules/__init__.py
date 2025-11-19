@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 from .geometry_utils import (
     aa_to_rotmat,
     cam_crop_to_full,

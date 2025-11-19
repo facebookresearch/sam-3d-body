@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 # ------------------------------------------------------------------------------
 # pose.pytorch
 # Copyright (c) 2018-present Microsoft

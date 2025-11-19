@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 import os
 
 os.environ["OMP_NUM_THREADS"] = "1"

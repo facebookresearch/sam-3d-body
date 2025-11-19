@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 import numpy as np
 import cv2
 from sam_3d_body.visualization.renderer import Renderer

@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 from ..modules import to_2tuple
 from .mhr_head import MHRHead
 from .camera_head import PerspectiveHead

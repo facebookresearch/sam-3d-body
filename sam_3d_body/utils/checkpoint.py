@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 import torch
 from collections import namedtuple
 import pytorch_lightning as pl

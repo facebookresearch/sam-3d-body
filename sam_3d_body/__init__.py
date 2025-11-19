@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 __version__ = "1.0.0"
 
 from .sam_3d_body_estimator import SAM3DBodyEstimator

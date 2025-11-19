@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
 
 def create_backbone(name, cfg=None, pretrained=False, drop_path=0.0):
     if name in ["vit_hmr"]:
