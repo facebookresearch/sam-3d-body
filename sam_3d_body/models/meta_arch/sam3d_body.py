@@ -1350,7 +1350,6 @@ class SAM3DBody(BaseModel):
             & hand_kps2d_valid_mask
             & hand_wrist_kps2d_valid_mask
         )
-        print(hand_valid_mask, use_hand_box, thresh_wrist_angle)
         
         self.hand_batch_idx = []
         self.body_batch_idx = list(range(batch["img"].shape[1]))
