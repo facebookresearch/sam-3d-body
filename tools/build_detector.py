@@ -7,7 +7,7 @@ from pathlib import Path
 
 
 class HumanDetector:
-    def __init__(self, name="vitdet", device="cuda", path=None, **kwargs):
+    def __init__(self, name="vitdet", device="cuda", **kwargs):
         self.device = device
 
         if name == "vitdet":
