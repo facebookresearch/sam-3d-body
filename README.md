@@ -69,7 +69,7 @@ SAM 3D Body is one part of SAM 3D, a pair of models for full-body human mesh rec
 **11/19/2025 -- Checkpoints Launched, Dataset Released, Web Demo and Paper are out**
 - < MORE DETAILS HERE >
 
-## Installation  [TODO: use david version]
+## Installation
 See [Install.md](INSTALL.md)
 
 ## Usage - Inference
@@ -98,7 +98,7 @@ huggingface-cli download facebook/sam-3d-body-dinov3 --local-dir checkpoints/sam
 ### Load the model directly
 ```
 model = build_sam_3d_body_model(
-    checkpoint_path: str = "checkpoints/last.ckpt",
+    checkpoint_path: str = "checkpoints/model.ckpt",
     mhr_path: str = "checkpoints/assets/")
 ```
 
@@ -110,8 +110,8 @@ The table below shows the SAM 3D Body checkpoints released on [TODO: Update this
 
 |      **Backbone**       | **3DPW (MPJPE)** |    **EMDB (MPJPE)**     | **RICH (MPJPE)** | **COCO (PCK@.05)** |  **LSPET (PCK@.05)** | **Freihand (PA-MPJPE)**
 | :------------------: | :----------: | :--------------------: | :-----------------: | :----------------: | :----------------: | :----------------: |
-|   ViT-H<br /> ([config](https://huggingface.co/facebook/sam-3d-body/blob/main/model_config.yaml), [checkpoint](https://huggingface.co/facebook/sam-3d-body))    |     54.8   |         62.9         |       55.0        |        86.8       | 68.9 |  5.5
-|  DINOv3 <br /> ([config](https://huggingface.co/facebook/sam-3d-body-small/blob/main/model_config.yaml), [checkpoint](https://huggingface.co/facebook/sam-3d-body-fast))   |      54.8      |          61.7         |       53.7        |       86.5        | 68.0 | 5.5
+|   ViT-H<br /> ([config](https://huggingface.co/facebook/sam-3d-body-vith/blob/main/model_config.yaml), [checkpoint](https://huggingface.co/facebook/sam-3d-body-vith/blob/main/model.ckpt))    |     54.8   |         62.9         |       55.0        |        86.8       | 68.9 |  5.5
+|  DINOv3 <br /> ([config](https://huggingface.co/facebook/sam-3d-body-dinov3/blob/main/model_config.yaml), [checkpoint](https://huggingface.co/facebook/sam-3d-body-dinov3/blob/main/model.ckpt))   |      54.8      |          61.7         |       53.7        |       86.5        | 68.0 | 5.5
 
 ## SAM 3D Body Dataset
 The SAM 3D Body data is released in [Hugging Face](https://huggingface.co/datasets/facebook/sam-3d-body-dataset). Please follow the [instructions](./data/README.md) to download and process the data.
@@ -132,7 +132,7 @@ Vivian Lee, George Orlin, Matt Feiszli, Nikhila Ravi, Andrew Westbury, Jyun-Ting
 
 Third-party code: detectron2, and more? [TODO: Xitong Please Update this]
 
-## Citing SAM 3D Body [TODO: Update this]
+## Citing SAM 3D Body
 
 If you use SAM 3D Body or the SAM 3D Body dataset in your research, please use the following BibTeX entry.
 
