@@ -1,4 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
+
 import pickle
 from typing import Dict, Optional
 
@@ -6,11 +7,6 @@ import torch
 import torch.nn as nn
 
 from ..modules.transformer import build_norm_layer, TransformerDecoderLayer
-
-
-def save_pickle(obj, f):
-    with open(f, "wb+") as ff:
-        pickle.dump(obj, ff)
 
 
 class PromptableDecoder(nn.Module):
@@ -146,8 +142,8 @@ class PromptableDecoder(nn.Module):
                     torch.cat([image_augment, hand_augment], dim=1),
                     token_mask,
                 )
-                image_embedding = image_embedding[:, :image_augment.shape[1]]
-                
+                image_embedding = image_embedding[:, : image_augment.shape[1]]
+
             if self.do_interm_preds and layer_idx < len(self.layers) - 1:
                 curr_pose_output = token_to_pose_output_fn(
                     self.norm_final(token_embedding),
@@ -160,12 +156,9 @@ class PromptableDecoder(nn.Module):
 
                 if self.keypoint_token_update:
                     assert keypoint_token_update_fn is not None
-                    # Be careful - this looks like it's not in-place updated, but who knows? curr_pose_output is.
                     token_embedding, token_augment, _, _ = keypoint_token_update_fn(
                         token_embedding, token_augment, curr_pose_output, layer_idx
                     )
-
-        # save_pickle(all_pose_outputs, "/private/home/jinhyun1/all_pose_outputs.pkl"); print("SAVING!3"); breakpoint()
 
         out = self.norm_final(token_embedding)
 

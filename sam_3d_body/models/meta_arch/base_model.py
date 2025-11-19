@@ -1,4 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
+
 """Define an abstract base model for consistent format input / processing / output."""
 
 from abc import abstractmethod
@@ -155,7 +156,7 @@ class BaseModel(BaseLightningModule):
             self._set_fp16(self.backbone, fp16_type)
         if hasattr(self, "full_encoder"):
             self._set_fp16(self.full_encoder, fp16_type)
-        
+
         if hasattr(self.backbone, "lhand_pos_embed"):
             self.backbone.lhand_pos_embed.data = self.backbone.lhand_pos_embed.data.to(
                 fp16_type

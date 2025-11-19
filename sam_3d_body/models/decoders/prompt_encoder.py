@@ -1,4 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
+
 from typing import Any, Optional, Tuple
 
 import numpy as np
@@ -6,22 +7,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-
-# From https://github.com/facebookresearch/detectron2/blob/main/detectron2/layers/batch_norm.py # noqa
-# Itself from https://github.com/facebookresearch/ConvNeXt/blob/d1fa8f6fef0a165b27399986cc2bdacc92777e40/models/convnext.py#L119  # noqa
-class LayerNorm2d(nn.Module):
-    def __init__(self, num_channels: int, eps: float = 1e-6) -> None:
-        super().__init__()
-        self.weight = nn.Parameter(torch.ones(num_channels))
-        self.bias = nn.Parameter(torch.zeros(num_channels))
-        self.eps = eps
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        u = x.mean(1, keepdim=True)
-        s = (x - u).pow(2).mean(1, keepdim=True)
-        x = (x - u) / torch.sqrt(s + self.eps)
-        x = self.weight[:, None, None] * x + self.bias[:, None, None]
-        return x
+from sam_3d_body.models.modules.transformer import LayerNorm2d
 
 
 class PromptEncoder(nn.Module):
@@ -142,15 +128,6 @@ class PromptEncoder(nn.Module):
         point_mask = labels > -2
         return point_embedding, point_mask
 
-    # def _embed_boxes(self, boxes: torch.Tensor) -> torch.Tensor:
-    #     """Embeds box prompts."""
-    #     boxes = boxes + 0.5  # Shift to center of pixel
-    #     coords = boxes.reshape(-1, 2, 2)
-    #     corner_embedding = self.pe_layer.forward_with_coords(coords, self.input_image_size)
-    #     corner_embedding[:, 0, :] += self.point_embeddings[2].weight
-    #     corner_embedding[:, 1, :] += self.point_embeddings[3].weight
-    #     return corner_embedding
-
     def _get_batch_size(
         self,
         keypoints: Optional[torch.Tensor],
@@ -207,18 +184,8 @@ class PromptEncoder(nn.Module):
             )  # pad=(boxes is None))
             sparse_embeddings = torch.cat([sparse_embeddings, point_embeddings], dim=1)
             sparse_masks = torch.cat([sparse_masks, point_mask], dim=1)
-        # if boxes is not None:
-        #     box_embeddings = self._embed_boxes(boxes)
-        #     sparse_embeddings = torch.cat([sparse_embeddings, box_embeddings], dim=1)
 
-        # if masks is not None:
-        #     dense_embeddings = self._embed_masks(masks)
-        # else:
-        #     dense_embeddings = self.no_mask_embed.weight.reshape(1, -1, 1, 1).expand(
-        #         bs, -1, self.image_embedding_size[0], self.image_embedding_size[1]
-        #     )
-
-        return sparse_embeddings, sparse_masks  # , dense_embeddings
+        return sparse_embeddings, sparse_masks
 
     def get_mask_embeddings(
         self,

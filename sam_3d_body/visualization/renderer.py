@@ -1,4 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
+
 import os
 
 if "PYOPENGL_PLATFORM" not in os.environ:
@@ -122,8 +123,7 @@ def create_raymond_lights() -> List[pyrender.Node]:
         matrix[:3, :3] = np.c_[x, y, z]
         nodes.append(
             pyrender.Node(
-                light=pyrender.DirectionalLight(
-                    color=np.ones(3), intensity=1.0),
+                light=pyrender.DirectionalLight(color=np.ones(3), intensity=1.0),
                 matrix=matrix,
             )
         )
@@ -186,7 +186,12 @@ class Renderer:
         material = pyrender.MetallicRoughnessMaterial(
             metallicFactor=0.0,
             alphaMode="OPAQUE",
-            baseColorFactor=(mesh_base_color[2], mesh_base_color[1], mesh_base_color[0], 1.0),  # Swap RGB to BGR for pyrender
+            baseColorFactor=(
+                mesh_base_color[2],
+                mesh_base_color[1],
+                mesh_base_color[0],
+                1.0,
+            ),  # Swap RGB to BGR for pyrender
         )
         mesh = trimesh.Trimesh(vertices.copy(), self.faces.copy())
 
@@ -201,8 +206,7 @@ class Renderer:
             )
             mesh.apply_transform(rot)
 
-        rot = trimesh.transformations.rotation_matrix(
-            np.radians(180), [1, 0, 0])
+        rot = trimesh.transformations.rotation_matrix(np.radians(180), [1, 0, 0])
         mesh.apply_transform(rot)
 
         mesh = pyrender.Mesh.from_trimesh(mesh, material=material)
@@ -239,8 +243,7 @@ class Renderer:
         for node in light_nodes:
             scene.add_node(node)
 
-        color, _rend_depth = renderer.render(
-            scene, flags=pyrender.RenderFlags.RGBA)
+        color, _rend_depth = renderer.render(scene, flags=pyrender.RenderFlags.RGBA)
 
         color = color.astype(np.float32) / 255.0
         renderer.delete()
@@ -275,12 +278,10 @@ class Renderer:
 
         # mesh = trimesh.Trimesh(vertices.copy(), self.faces.copy())
 
-        rot = trimesh.transformations.rotation_matrix(
-            np.radians(rot_angle), rot_axis)
+        rot = trimesh.transformations.rotation_matrix(np.radians(rot_angle), rot_axis)
         mesh.apply_transform(rot)
 
-        rot = trimesh.transformations.rotation_matrix(
-            np.radians(180), [1, 0, 0])
+        rot = trimesh.transformations.rotation_matrix(np.radians(180), [1, 0, 0])
         mesh.apply_transform(rot)
         return mesh
 
@@ -346,8 +347,7 @@ class Renderer:
         for node in light_nodes:
             scene.add_node(node)
 
-        color, rend_depth = renderer.render(
-            scene, flags=pyrender.RenderFlags.RGBA)
+        color, rend_depth = renderer.render(scene, flags=pyrender.RenderFlags.RGBA)
         color = color.astype(np.float32) / 255.0
         renderer.delete()
 
@@ -368,10 +368,26 @@ class Renderer:
         renderer = pyrender.OffscreenRenderer(
             viewport_width=render_res[0], viewport_height=render_res[1], point_size=1.0
         )
-        MESH_COLORS = [[0.000, 0.447, 0.741], [0.850, 0.325, 0.098], [0.929, 0.694, 0.125],
-                       [0.494, 0.184, 0.556], [0.466, 0.674, 0.188], [0.301, 0.745, 0.933]]
-        mesh_list = [pyrender.Mesh.from_trimesh(self.vertices_to_trimesh(vvv, ttt.copy(), MESH_COLORS[n % len(MESH_COLORS)],
-                                                                         rot_axis, rot_angle)) for n, (vvv, ttt) in enumerate(zip(vertices, cam_t))]
+        MESH_COLORS = [
+            [0.000, 0.447, 0.741],
+            [0.850, 0.325, 0.098],
+            [0.929, 0.694, 0.125],
+            [0.494, 0.184, 0.556],
+            [0.466, 0.674, 0.188],
+            [0.301, 0.745, 0.933],
+        ]
+        mesh_list = [
+            pyrender.Mesh.from_trimesh(
+                self.vertices_to_trimesh(
+                    vvv,
+                    ttt.copy(),
+                    MESH_COLORS[n % len(MESH_COLORS)],
+                    rot_axis,
+                    rot_angle,
+                )
+            )
+            for n, (vvv, ttt) in enumerate(zip(vertices, cam_t))
+        ]
 
         scene = pyrender.Scene(
             bg_color=[*scene_bg_color, 0.0], ambient_light=(0.3, 0.3, 0.3)
@@ -401,8 +417,7 @@ class Renderer:
         for node in light_nodes:
             scene.add_node(node)
 
-        color, rend_depth = renderer.render(
-            scene, flags=pyrender.RenderFlags.RGBA)
+        color, rend_depth = renderer.render(scene, flags=pyrender.RenderFlags.RGBA)
         color = color.astype(np.float32) / 255.0
         renderer.delete()
 
@@ -417,8 +432,7 @@ class Renderer:
             matrix = cam_pose @ pose
             node = pyrender.Node(
                 name=f"light-{i:02d}",
-                light=pyrender.DirectionalLight(
-                    color=color, intensity=intensity),
+                light=pyrender.DirectionalLight(color=color, intensity=intensity),
                 matrix=matrix,
             )
             if scene.has_node(node):

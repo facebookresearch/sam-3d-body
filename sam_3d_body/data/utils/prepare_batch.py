@@ -1,7 +1,9 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
+
 import numpy as np
 import torch
 from torch.utils.data import default_collate
+
 
 class NoCollate:
     def __init__(self, data):
@@ -63,10 +65,14 @@ def prepare_batch(
     else:
         # Default camera intrinsics according image size
         batch["cam_int"] = torch.tensor(
-            [[[(height ** 2 + width ** 2) ** 0.5, 0, width / 2.],
-            [0, (height ** 2 + width ** 2) ** 0.5, height / 2.],
-            [0, 0, 1]]],
+            [
+                [
+                    [(height**2 + width**2) ** 0.5, 0, width / 2.0],
+                    [0, (height**2 + width**2) ** 0.5, height / 2.0],
+                    [0, 0, 1],
+                ]
+            ],
         ).to(batch["img"])
-    
-    batch['img_ori'] = [NoCollate(img)]
+
+    batch["img_ori"] = [NoCollate(img)]
     return batch

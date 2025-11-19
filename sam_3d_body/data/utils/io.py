@@ -1,7 +1,9 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
+
+import os
 import time
 from typing import Any, List
-import os
+
 import braceexpand
 import cv2
 import numpy as np
@@ -13,7 +15,7 @@ def expand(s):
     return os.path.expanduser(os.path.expandvars(s))
 
 
-def expand_urls(urls: str|List[str]):
+def expand_urls(urls: str | List[str]):
     if isinstance(urls, str):
         urls = [urls]
     urls = [u for url in urls for u in braceexpand.braceexpand(expand(url))]
@@ -27,9 +29,9 @@ def load_image_from_file(
     retry: int = 10,
 ) -> dict:
     img = load_image(data_info["img_path"], backend, image_format, retry)
-    data_info['img'] = img
-    data_info['img_shape'] = img.shape[:2]
-    data_info['ori_shape'] = img.shape[:2]
+    data_info["img"] = img
+    data_info["img_shape"] = img.shape[:2]
+    data_info["ori_shape"] = img.shape[:2]
     return data_info
 
 
@@ -91,19 +93,19 @@ def resize_image(img, target_size, center=None, scale=None):
     # Paste the resized image onto the blank image, centering it
     start_x = (target_size - new_width) // 2
     start_y = (target_size - new_height) // 2
-    final_img[start_y:start_y + new_height, start_x:start_x + new_width] = resized_img
+    final_img[start_y : start_y + new_height, start_x : start_x + new_width] = (
+        resized_img
+    )
 
     if center is not None and scale is not None:
         ratio_width = new_width / width
         ratio_height = new_height / height
 
         new_scale = np.stack(
-            [scale[:, 0] * ratio_width, scale[:, 1] * ratio_height],
-            axis=1
+            [scale[:, 0] * ratio_width, scale[:, 1] * ratio_height], axis=1
         )
         new_center = np.stack(
-            [center[:, 0] * ratio_width, center[:, 1] * ratio_height],
-            axis=1
+            [center[:, 0] * ratio_width, center[:, 1] * ratio_height], axis=1
         )
         new_center[:, 0] += start_x
         new_center[:, 1] += start_y
