@@ -121,6 +121,3 @@ debug/
 **/.dist_test
 sandbox*
 *.sh
-demo_hand_image/
-demo_image/
-cmu_stills/
