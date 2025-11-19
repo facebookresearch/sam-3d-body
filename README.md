@@ -1,12 +1,16 @@
+# SAM 3D
+
+SAM 3D Body is one part of SAM 3D, a pair of models for full-body human mesh recovery. If you’re looking for SAM 3D Objects, [click here](https://github.com/facebookresearch/sam-3d-objects).
+
 # SAM 3D Body: Robust Full-Body Human Mesh Recovery 
 
 **[AI at Meta, FAIR](https://ai.meta.com/research/)**
 
-[Xitong Yang](https://scholar.google.com/citations?user=k0qC-7AAAAAJ&hl=en)\*, [Devansh Kukreja](https://www.linkedin.com/in/devanshkukreja)\*, [Don Pinkus](https://www.linkedin.com/in/don-pinkus-9140702a)\*, [Taosha Fan](https://scholar.google.com/citations?user=3PJeg1wAAAAJ&hl=en), [David Park](https://jindapark.github.io/), [Soyong Shin](https://yohanshin.github.io/), [Jinkun Cao](https://www.jinkuncao.com/), [Jiawei Liu](https://jia-wei-liu.github.io/), [Nicolas Ugrinovic](https://www.iri.upc.edu/people/nugrinovic/), [Anushka Sagar](https://www.linkedin.com/in/anushkasagar)†, [Jitendra Malik](https://people.eecs.berkeley.edu/~malik/)†, [Piotr Dollar](https://pdollar.github.io/)†, [Kris Kitani](https://kriskitani.github.io/)†
+[Xitong Yang](https://scholar.google.com/citations?user=k0qC-7AAAAAJ&hl=en)\*, [Devansh Kukreja](https://www.linkedin.com/in/devanshkukreja)\*, [Don Pinkus](https://www.linkedin.com/in/don-pinkus-9140702a)\*, [Anushka Sagar](https://www.linkedin.com/in/anushkasagar), [Taosha Fan](https://scholar.google.com/citations?user=3PJeg1wAAAAJ&hl=en), [Jinhyung Park](https://jindapark.github.io/), [Soyong Shin](https://yohanshin.github.io/), [Jinkun Cao](https://www.jinkuncao.com/), [Jiawei Liu](https://jia-wei-liu.github.io/), [Nicolas Ugrinovic](https://www.iri.upc.edu/people/nugrinovic/), [Matt Feiszli](https://scholar.google.com/citations?user=A-wA73gAAAAJ&hl=en&oi=ao)†, [Jitendra Malik](https://people.eecs.berkeley.edu/~malik/)†, [Piotr Dollar](https://pdollar.github.io/)†, [Kris Kitani](https://kriskitani.github.io/)†
 
 *Core contributors, †Project leads
 
-[[`<REPLACE ME Paper>`](https://ai.meta.com/research/publications/sam-2-segment-anything-in-images-and-videos/)] [[`<REPLACE ME Project>`](https://ai.meta.com/sam2)] [[`<REPLACE ME Demo>`](https://sam2.metademolab.com/)] [[`<Dataset>`](https://huggingface.co/datasets/facebook/sam-3d-body-dataset)] [[`<REPLACE ME Blog>`](https://ai.meta.com/blog/segment-anything-2)] [[`<REPLACE ME BibTeX>`](#citing-sam-2)]
+[[`Paper`](https://ai.meta.com/research/publications/sam-3d-body/)] [[`Code`](https://github.com/facebookresearch/sam-3d-body)] [[`Website`](https://ai.meta.com/sam3d/)] [[`Demo`](https://www.aidemos.meta.com/segment-anything/editor/convert-body-to-3d)] [[`<Dataset>`](https://huggingface.co/datasets/facebook/sam-3d-body-dataset)] [[`Blog`](https://ai.meta.com/blog/sam-3d/)] [[`BibTeX`](#citing-sam-3d-body)]
 
 ![SAM 3D Body Model Architecture](assets/model_diagram.png?raw=true)
 
@@ -14,7 +18,7 @@
 
 3DB employs an encoder-decoder architecture and supports auxiliary prompts, including 2D keypoints and masks, enabling user-guided inference similar to the SAM family of models. We derive high-quality annotations from a multi-stage annotation pipeline using differentiable optimization, multi-view geometry, dense keypoint detection, and a data engine to collect and annotated data covering both common and rare poses across a wide range of viewpoints.
 
-## Visual Comparisons  [TODO: Jiawei and David Please Update this]
+## Visual Comparisons
 
 <table>
 <thead>
@@ -65,7 +69,7 @@
 **11/19/2025 -- Checkpoints Launched, Dataset Released, Web Demo and Paper are out**
 - < MORE DETAILS HERE >
 
-## Installation  [TODO: Taosha and David Please Confirm this]
+## Installation  [TODO: use david version]
 See [Install.md](INSTALL.md)
 
 ## Usage - Inference
@@ -100,7 +104,7 @@ model = build_sam_3d_body_model(
 
 ## Model Description
 
-### SAM 3D Body checkpoints [TODO: Xitong Please Update this]
+### SAM 3D Body checkpoints
 
 The table below shows the SAM 3D Body checkpoints released on [TODO: Update this].
 
@@ -109,15 +113,9 @@ The table below shows the SAM 3D Body checkpoints released on [TODO: Update this
 |   ViT-H<br /> ([config](https://huggingface.co/facebook/sam-3d-body/blob/main/model_config.yaml), [checkpoint](https://huggingface.co/facebook/sam-3d-body))    |     54.8   |         62.9         |       55.0        |        86.8       | 68.9 |  5.5
 |  DINOv3 <br /> ([config](https://huggingface.co/facebook/sam-3d-body-small/blob/main/model_config.yaml), [checkpoint](https://huggingface.co/facebook/sam-3d-body-fast))   |      54.8      |          61.7         |       53.7        |       86.5        | 68.0 | 5.5
 
-
-< TODO: Update when we run speedtests >
-Speed measured on an A100 with `torch 2.5.1, cuda 12.4`. See `benchmark.py` for an example on benchmarking (compiling all the model components). Compiling only the image encoder can be more flexible and also provide (a smaller) speed-up (set `compile_image_encoder: True` in the config).
-
 ## SAM 3D Body Dataset
 The SAM 3D Body data is released in [Hugging Face](https://huggingface.co/datasets/facebook/sam-3d-body-dataset). Please follow the [instructions](./data/README.md) to download and process the data.
 
-
-### Dataset Loading
 
 ## License
 
