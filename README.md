@@ -95,7 +95,7 @@ huggingface-cli download facebook/sam-3d-body-dinov3 --local-dir checkpoints/sam
 ```
 model = build_sam_3d_body_model(
     checkpoint_path: str = "checkpoints/last.ckpt",
-    proto_path: str = "checkpoints/assets/")
+    mhr_path: str = "checkpoints/assets/")
 ```
 
 ## Model Description

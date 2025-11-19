@@ -134,7 +134,7 @@ class Renderer:
 
     def __init__(self, focal_length, faces=None):
         """
-        Wrapper around the pyrender renderer to render SMPL meshes.
+        Wrapper around the pyrender renderer to render meshes.
         Args:
             cfg (CfgNode): Model config file.
             faces (np.array): Array of shape (F, 3) containing the mesh faces.
