@@ -66,6 +66,9 @@ dev = [
     "black>=25.12.0",
 ]
 
+[tool.uv.extra-build-dependencies]
+xtcocotools = ["numpy"]
+
 [tool.uv]
 conflicts = [
     [
