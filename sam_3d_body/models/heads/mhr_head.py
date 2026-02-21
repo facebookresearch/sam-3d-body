@@ -224,9 +224,19 @@ class MHRHead(nn.Module):
             # Zero out non-hand parameters
             model_params[:, self.nonhand_param_idxs] = 0
 
+        # MHR TorchScript may run on CPU (e.g., for Apple MPS compatibility).
+        # Move its inputs to the MHR device and move outputs back.
+        mhr_device = next(self.mhr.parameters()).device
+        input_device = shape_params.device
+        shape_params_mhr = shape_params.to(mhr_device)
+        model_params_mhr = model_params.to(mhr_device)
+        expr_params_mhr = expr_params.to(mhr_device) if expr_params is not None else None
+
         curr_skinned_verts, curr_skel_state = self.mhr(
-            shape_params, model_params, expr_params
+            shape_params_mhr, model_params_mhr, expr_params_mhr
         )
+        curr_skinned_verts = curr_skinned_verts.to(input_device)
+        curr_skel_state = curr_skel_state.to(input_device)
         curr_joint_coords, curr_joint_quats, _ = torch.split(
             curr_skel_state, [3, 4, 1], dim=2
         )

@@ -2,8 +2,10 @@
 
 import os
 
+import sys
 if "PYOPENGL_PLATFORM" not in os.environ:
-    os.environ["PYOPENGL_PLATFORM"] = "egl"
+    if sys.platform != "darwin":
+        os.environ["PYOPENGL_PLATFORM"] = "egl"
 from typing import List, Optional
 
 import cv2

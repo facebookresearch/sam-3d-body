@@ -94,7 +94,8 @@ class SAM3DBodyEstimator:
         self.image_embeddings = None
         self.output = None
         self.prev_prompt = []
-        torch.cuda.empty_cache()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
         if type(img) == str:
             img = load_image(img, backend="cv2", image_format="bgr")
@@ -157,7 +158,13 @@ class SAM3DBodyEstimator:
         batch = prepare_batch(img, self.transform, boxes, masks, masks_score)
 
         #################### Run model inference on an image ####################
-        batch = recursive_to(batch, "cuda")
+        if torch.cuda.is_available():
+            _device = "cuda"
+        elif torch.backends.mps.is_available():
+            _device = "mps"
+        else:
+            _device = "cpu"
+        batch = recursive_to(batch, _device)
         self.model._initialize_batch(batch)
 
         # Handle camera intrinsics

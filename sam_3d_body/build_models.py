@@ -36,6 +36,15 @@ def load_sam_3d_body(checkpoint_path: str = "", device: str = "cuda", mhr_path: 
     load_state_dict(model, state_dict, strict=False)
 
     model = model.to(device)
+
+    # Apple MPS does not support float64 operations used inside TorchScript MHR.
+    # Keep the heavy backbone/decoder on MPS, but run MHR heads on CPU.
+    if str(device) == "mps":
+        if hasattr(model, "head_pose") and hasattr(model.head_pose, "mhr"):
+            model.head_pose.mhr = model.head_pose.mhr.to("cpu")
+        if hasattr(model, "head_pose_hand") and hasattr(model.head_pose_hand, "mhr"):
+            model.head_pose_hand.mhr = model.head_pose_hand.mhr.to("cpu")
+
     model.eval()
     return model, model_cfg
 

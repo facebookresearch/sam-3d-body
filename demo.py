@@ -35,7 +35,13 @@ def main(args):
     fov_path = args.fov_path or os.environ.get("SAM3D_FOV_PATH", "")
 
     # Initialize sam-3d-body model and other optional modules
-    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+    elif torch.backends.mps.is_available():
+        device = torch.device("mps")
+    else:
+        device = torch.device("cpu")
+    print(f"Using device: {device}")
     model, model_cfg = load_sam_3d_body(
         args.checkpoint_path, device=device, mhr_path=mhr_path
     )
