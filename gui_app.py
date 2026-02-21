@@ -1,589 +1,374 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
+
 import argparse
-import csv
-import json
-import multiprocessing as mp
 import os
+import signal
+import subprocess
+import sys
+import time
 from datetime import datetime
 from typing import Any
 
 import cv2
 import gradio as gr
-import numpy as np
-import torch
 
-from sam_3d_body import load_sam_3d_body, SAM3DBodyEstimator
-from sam_3d_body.metadata.mhr70 import pose_info as mhr70_pose_info
-from sam_3d_body.visualization.renderer import Renderer
-from sam_3d_body.visualization.skeleton_visualizer import SkeletonVisualizer
+from sam_3d_body import render_npz_to_files, run_fast_infer
 
-
-LIGHT_BLUE = (0.65098039, 0.74117647, 0.85882353)
-
-ABBR_MAP = {
-    "nose": "Nose",
-    "eye": "Eye",
-    "ear": "Ear",
-    "shoulder": "Sh",
-    "elbow": "Elb",
-    "wrist": "Wr",
-    "hip": "Hip",
-    "knee": "Knee",
-    "ankle": "Ank",
-    "neck": "Neck",
-    "thumb": "Th",
-    "index": "Idx",
-    "middle": "Mid",
-    "ring": "Ring",
-    "pinky": "Pky",
-    "toe": "Toe",
-    "heel": "Heel",
-}
+# ---------------------------------------------------------------------------
+# PID file for stale-process detection
+# ---------------------------------------------------------------------------
+_PID_FILE = os.path.join(os.path.dirname(__file__), ".gui_pid")
 
 
-def _mesh_render_worker(conn, img_bgr, outputs, faces):
-    """Run pyrender work in a subprocess main thread (macOS-safe for pyglet)."""
+def _write_pid() -> None:
+    with open(_PID_FILE, "w") as f:
+        f.write(str(os.getpid()))
+
+
+def _kill_stale(port: int) -> None:
+    """Best-effort kill of a previous GUI process occupying *port*."""
     try:
-        all_depths = np.stack([tmp["pred_cam_t"] for tmp in outputs], axis=0)[:, 2]
-        outputs_sorted = [outputs[idx] for idx in np.argsort(-all_depths)]
-
-        all_pred_vertices = []
-        all_faces = []
-        for pid, person_output in enumerate(outputs_sorted):
-            all_pred_vertices.append(person_output["pred_vertices"] + person_output["pred_cam_t"])
-            all_faces.append(faces + len(person_output["pred_vertices"]) * pid)
-
-        all_pred_vertices = np.concatenate(all_pred_vertices, axis=0)
-        all_faces = np.concatenate(all_faces, axis=0)
-
-        fake_pred_cam_t = (
-            np.max(all_pred_vertices[-2 * 18439 :], axis=0)
-            + np.min(all_pred_vertices[-2 * 18439 :], axis=0)
-        ) / 2
-        all_pred_vertices = all_pred_vertices - fake_pred_cam_t
-
-        renderer = Renderer(focal_length=outputs_sorted[0]["focal_length"], faces=all_faces)
-
-        img_mesh = (
-            renderer(
-                all_pred_vertices,
-                fake_pred_cam_t,
-                img_bgr.copy(),
-                mesh_base_color=LIGHT_BLUE,
-                scene_bg_color=(1, 1, 1),
-            )
-            * 255
-        )
-
-        white_img = np.ones_like(img_bgr) * 255
-        img_mesh_side = (
-            renderer(
-                all_pred_vertices,
-                fake_pred_cam_t,
-                white_img,
-                mesh_base_color=LIGHT_BLUE,
-                scene_bg_color=(1, 1, 1),
-                side_view=True,
-            )
-            * 255
-        )
-
-        conn.send(("ok", to_uint8(img_mesh), to_uint8(img_mesh_side)))
-    except Exception as e:
-        conn.send(("error", f"{type(e).__name__}: {e}"))
-    finally:
-        conn.close()
+        out = subprocess.check_output(
+            ["lsof", "-tiTCP:" + str(port), "-sTCP:LISTEN"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+        for pid_str in out.splitlines():
+            pid = int(pid_str)
+            if pid != os.getpid():
+                os.kill(pid, signal.SIGTERM)
+                time.sleep(0.3)
+    except Exception:
+        pass
+    # Also check PID file
+    if os.path.exists(_PID_FILE):
+        try:
+            old_pid = int(open(_PID_FILE).read().strip())
+            if old_pid != os.getpid():
+                os.kill(old_pid, signal.SIGTERM)
+        except (ValueError, ProcessLookupError, PermissionError):
+            pass
 
 
-def detect_device() -> str:
-    if torch.cuda.is_available():
-        return "cuda"
-    if torch.backends.mps.is_available():
-        return "mps"
-    return "cpu"
+# ---------------------------------------------------------------------------
+# Gradio value helpers
+# ---------------------------------------------------------------------------
+
+def _collect_paths(value: Any) -> list[str]:
+    """Recursively extract filesystem paths from Gradio File component values."""
+    paths: list[str] = []
+    if value is None:
+        return paths
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        for k in ("path", "name", "file", "value"):
+            if k in value:
+                paths.extend(_collect_paths(value[k]))
+        return paths
+    if isinstance(value, (list, tuple)):
+        for v in value:
+            paths.extend(_collect_paths(v))
+        return paths
+    if hasattr(value, "name"):
+        return [str(value.name)]
+    return [str(value)]
 
 
-def to_uint8(img: np.ndarray) -> np.ndarray:
-    if img.dtype == np.uint8:
-        return img
-    return np.clip(img, 0, 255).astype(np.uint8)
+def _img_tuple(path: str):
+    img = cv2.imread(path)
+    if img is None:
+        return None
+    return (img[:, :, ::-1], os.path.basename(path))
 
 
-class Sam3DGuiRunner:
-    def __init__(self, checkpoint_path: str, mhr_path: str, output_dir: str = "output/gui"):
+def _perf_str(summary: dict[str, Any]) -> str:
+    """Format a single-image performance summary into a readable string."""
+    if summary.get("cache_hit"):
+        cache_ms = summary.get("cache_ms") or 0
+        return f"cache_hit cache_ms={cache_ms:.1f}"
+    infer_ms = summary.get("infer_ms") or 0
+    save_ms = summary.get("save_ms")
+    if save_ms is not None:
+        return f"infer_ms={infer_ms:.1f} save_ms={save_ms:.1f}"
+    return f"infer_ms={infer_ms:.1f} save=async"
+
+
+# ---------------------------------------------------------------------------
+# Core GUI class
+# ---------------------------------------------------------------------------
+
+class ThinGui:
+    def __init__(self, checkpoint_path: str, mhr_path: str, output_dir: str):
         self.checkpoint_path = checkpoint_path
         self.mhr_path = mhr_path
         self.output_dir = output_dir
-
-        self.device = detect_device()
-        self.model = None
-        self.model_cfg = None
-        self.estimator = None
-
-        self.visualizer = SkeletonVisualizer(line_width=2, radius=5)
-        self.visualizer.set_pose_meta(mhr70_pose_info)
-
-    def ensure_loaded(self):
-        if self.estimator is not None:
-            return
-
-        model, model_cfg = load_sam_3d_body(
-            checkpoint_path=self.checkpoint_path,
-            device=self.device,
-            mhr_path=self.mhr_path,
-        )
-
-        self.model = model
-        self.model_cfg = model_cfg
-        self.estimator = SAM3DBodyEstimator(
-            sam_3d_body_model=model,
-            model_cfg=model_cfg,
-            human_detector=None,
-            human_segmentor=None,
-            fov_estimator=None,
-        )
-
-    def render_keypoints(self, img_bgr: np.ndarray, outputs: list[dict[str, Any]]) -> np.ndarray:
-        img_keypoints = img_bgr.copy()
-        for person_output in outputs:
-            keypoints_2d = person_output["pred_keypoints_2d"]
-            keypoints_2d = np.concatenate(
-                [keypoints_2d, np.ones((keypoints_2d.shape[0], 1))], axis=-1
-            )
-            img_keypoints = self.visualizer.draw_skeleton(img_keypoints, keypoints_2d)
-            bbox = person_output["bbox"]
-            img_keypoints = cv2.rectangle(
-                img_keypoints,
-                (int(bbox[0]), int(bbox[1])),
-                (int(bbox[2]), int(bbox[3])),
-                (0, 255, 0),
-                2,
-            )
-        return img_keypoints
-
-    def _keypoint_abbrev(self, idx: int) -> str:
-        kp_name = mhr70_pose_info["keypoint_info"].get(idx, {}).get("name", f"kp{idx}")
-        tokens = kp_name.split("_")
-        prefix = ""
-        if tokens and tokens[0] in ("left", "right"):
-            prefix = "L" if tokens[0] == "left" else "R"
-            tokens = tokens[1:]
-        if not tokens:
-            return f"{prefix}KP{idx}"
-        head = tokens[0]
-        base = ABBR_MAP.get(head, head[:3].capitalize())
-        return f"{prefix}{base}"
-
-    def render_keypoints_labeled(
-        self, img_bgr: np.ndarray, outputs: list[dict[str, Any]]
-    ) -> np.ndarray:
-        img_labeled = self.render_keypoints(img_bgr, outputs)
-        for person_output in outputs:
-            keypoints_2d = person_output["pred_keypoints_2d"]
-            for k_idx, pt in enumerate(keypoints_2d):
-                x, y = int(pt[0]), int(pt[1])
-                if x < 0 or y < 0 or x >= img_labeled.shape[1] or y >= img_labeled.shape[0]:
-                    continue
-                text = self._keypoint_abbrev(k_idx)
-                cv2.putText(
-                    img_labeled,
-                    text,
-                    (x + 4, y - 4),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.35,
-                    (255, 255, 255),
-                    2,
-                    cv2.LINE_AA,
-                )
-                cv2.putText(
-                    img_labeled,
-                    text,
-                    (x + 4, y - 4),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.35,
-                    (0, 0, 0),
-                    1,
-                    cv2.LINE_AA,
-                )
-        return img_labeled
-
-    def render_mesh_views(
-        self, img_bgr: np.ndarray, outputs: list[dict[str, Any]], faces: np.ndarray
-    ) -> tuple[np.ndarray, np.ndarray]:
-        if len(outputs) == 0:
-            white_img = np.ones_like(img_bgr) * 255
-            return img_bgr.copy(), white_img
-
-        all_depths = np.stack([tmp["pred_cam_t"] for tmp in outputs], axis=0)[:, 2]
-        outputs_sorted = [outputs[idx] for idx in np.argsort(-all_depths)]
-
-        all_pred_vertices = []
-        all_faces = []
-        for pid, person_output in enumerate(outputs_sorted):
-            all_pred_vertices.append(person_output["pred_vertices"] + person_output["pred_cam_t"])
-            all_faces.append(faces + len(person_output["pred_vertices"]) * pid)
-
-        all_pred_vertices = np.concatenate(all_pred_vertices, axis=0)
-        all_faces = np.concatenate(all_faces, axis=0)
-
-        fake_pred_cam_t = (
-            np.max(all_pred_vertices[-2 * 18439 :], axis=0)
-            + np.min(all_pred_vertices[-2 * 18439 :], axis=0)
-        ) / 2
-        all_pred_vertices = all_pred_vertices - fake_pred_cam_t
-
-        renderer = Renderer(focal_length=outputs_sorted[0]["focal_length"], faces=all_faces)
-
-        img_mesh = (
-            renderer(
-                all_pred_vertices,
-                fake_pred_cam_t,
-                img_bgr.copy(),
-                mesh_base_color=LIGHT_BLUE,
-                scene_bg_color=(1, 1, 1),
-            )
-            * 255
-        )
-
-        white_img = np.ones_like(img_bgr) * 255
-        img_mesh_side = (
-            renderer(
-                all_pred_vertices,
-                fake_pred_cam_t,
-                white_img,
-                mesh_base_color=LIGHT_BLUE,
-                scene_bg_color=(1, 1, 1),
-                side_view=True,
-            )
-            * 255
-        )
-        return to_uint8(img_mesh), to_uint8(img_mesh_side)
-
-    def render_mesh_views_subprocess(
-        self, img_bgr: np.ndarray, outputs: list[dict[str, Any]], faces: np.ndarray, timeout_s: int = 45
-    ) -> tuple[np.ndarray, np.ndarray]:
-        if len(outputs) == 0:
-            white_img = np.ones_like(img_bgr) * 255
-            return img_bgr.copy(), white_img
-
-        ctx = mp.get_context("spawn")
-        parent_conn, child_conn = ctx.Pipe(duplex=False)
-        proc = ctx.Process(
-            target=_mesh_render_worker,
-            args=(child_conn, img_bgr, outputs, faces),
-            daemon=True,
-        )
-        proc.start()
-        child_conn.close()
-
-        try:
-            if parent_conn.poll(timeout_s):
-                payload = parent_conn.recv()
-            else:
-                proc.terminate()
-                proc.join(timeout=3)
-                raise TimeoutError("Mesh rendering worker timed out")
-        finally:
-            parent_conn.close()
-
-        proc.join(timeout=3)
-
-        if payload[0] == "ok":
-            return payload[1], payload[2]
-        raise RuntimeError(payload[1])
-
-    def build_person_summary(self, outputs: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        summary = []
-        for idx, out in enumerate(outputs):
-            summary.append(
-                {
-                    "person_id": idx,
-                    "bbox": [float(v) for v in out["bbox"].tolist()],
-                    "focal_length": float(out["focal_length"]),
-                    "num_keypoints_2d": int(out["pred_keypoints_2d"].shape[0]),
-                    "num_keypoints_3d": int(out["pred_keypoints_3d"].shape[0]),
-                    "num_vertices": int(out["pred_vertices"].shape[0]),
-                }
-            )
-        return summary
-
-    def write_data_exports(
-        self, save_dir: str, image_stem: str, outputs: list[dict[str, Any]]
-    ) -> list[str]:
-        export_paths: list[str] = []
-
-        json_path = os.path.join(save_dir, f"{image_stem}_data.json")
-        json_payload = {"people": []}
-        for pid, out in enumerate(outputs):
-            json_payload["people"].append(
-                {
-                    "person_id": pid,
-                    "bbox": out["bbox"].tolist(),
-                    "focal_length": float(out["focal_length"]),
-                    "pred_cam_t": out["pred_cam_t"].tolist(),
-                    "pred_keypoints_2d": out["pred_keypoints_2d"].tolist(),
-                    "pred_keypoints_3d": out["pred_keypoints_3d"].tolist(),
-                    "pred_vertices": out["pred_vertices"].tolist(),
-                }
-            )
-        with open(json_path, "w") as f:
-            json.dump(json_payload, f)
-        export_paths.append(json_path)
-
-        k2d_csv = os.path.join(save_dir, f"{image_stem}_keypoints2d.csv")
-        with open(k2d_csv, "w", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow(["person_id", "kp_id", "x", "y"])
-            for pid, out in enumerate(outputs):
-                for kp_id, xy in enumerate(out["pred_keypoints_2d"]):
-                    writer.writerow([pid, kp_id, float(xy[0]), float(xy[1])])
-        export_paths.append(k2d_csv)
-
-        k3d_csv = os.path.join(save_dir, f"{image_stem}_keypoints3d.csv")
-        with open(k3d_csv, "w", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow(["person_id", "kp_id", "x", "y", "z"])
-            for pid, out in enumerate(outputs):
-                for kp_id, xyz in enumerate(out["pred_keypoints_3d"]):
-                    writer.writerow([pid, kp_id, float(xyz[0]), float(xyz[1]), float(xyz[2])])
-        export_paths.append(k3d_csv)
-
-        npz_path = os.path.join(save_dir, f"{image_stem}_full.npz")
-        npz_data = {}
-        for pid, out in enumerate(outputs):
-            prefix = f"person_{pid:03d}_"
-            npz_data[prefix + "bbox"] = out["bbox"]
-            npz_data[prefix + "pred_cam_t"] = out["pred_cam_t"]
-            npz_data[prefix + "pred_keypoints_2d"] = out["pred_keypoints_2d"]
-            npz_data[prefix + "pred_keypoints_3d"] = out["pred_keypoints_3d"]
-            npz_data[prefix + "pred_vertices"] = out["pred_vertices"]
-        np.savez_compressed(npz_path, **npz_data)
-        export_paths.append(npz_path)
-
-        return export_paths
-
-    def process_files(self, files, render_mode, progress=gr.Progress(track_tqdm=False)):
-        if not files:
-            return [], [], [], [], [], {"error": "No files selected."}, "No files selected.", [], []
-
-        self.ensure_loaded()
         os.makedirs(self.output_dir, exist_ok=True)
 
-        originals = []
-        keypoints_overlays = []
-        keypoints_labeled = []
-        mesh_overlays = []
-        side_views = []
-        all_metadata = []
-        labeled_paths = []
-        data_export_paths = []
-        warnings = []
+    def process(self, files, max_side, single_person, save_compressed, render_mesh, cache_dir, inference_type):
+        if not files:
+            return [], [], [], "No files selected.", []
 
-        for i, file_obj in enumerate(files):
-            progress((i, len(files)), desc=f"Processing {i + 1}/{len(files)}")
+        image_paths = [f.name if hasattr(f, "name") else str(f) for f in files]
+        npz_dir = os.path.join(self.output_dir, "npz")
+        mesh_dir = os.path.join(self.output_dir, "render")
+        debug_log = os.path.join(self.output_dir, "debug.log")
+        os.makedirs(npz_dir, exist_ok=True)
+        os.makedirs(mesh_dir, exist_ok=True)
 
-            file_path = file_obj.name if hasattr(file_obj, "name") else str(file_obj)
-            img_bgr = cv2.imread(file_path)
-            if img_bgr is None:
-                all_metadata.append(
-                    {
-                        "file": file_path,
-                        "error": "Could not read image",
-                    }
-                )
+        with open(debug_log, "a") as f:
+            f.write(
+                f"\n[{datetime.now().isoformat()}] process start "
+                f"files={len(image_paths)} render_mesh={bool(render_mesh)}\n"
+            )
+            for p in image_paths:
+                f.write(f"  image={p}\n")
+
+        # ---- Inference ----
+        infer_type = str(inference_type).strip().lower() if inference_type else "full"
+        if infer_type not in ("full", "body"):
+            infer_type = "full"
+
+        infer_summary = run_fast_infer(
+            input_path=image_paths,
+            output_dir=npz_dir,
+            checkpoint_path=self.checkpoint_path,
+            mhr_path=self.mhr_path,
+            max_side=int(max_side),
+            single_person=bool(single_person),
+            map_2d_to_original=True,
+            save_compressed=bool(save_compressed),
+            cache_dir=cache_dir.strip(),
+            bbox_thr=0.8,
+            inference_type=infer_type,
+        )
+        summary_by_path = {str(entry.get("image_path")): entry for entry in infer_summary}
+
+        npz_files: list[str] = []
+        mesh_gallery: list[tuple] = []
+        side_gallery: list[tuple] = []
+        render_notes: list[str] = []
+
+        for img_path in image_paths:
+            stem = os.path.splitext(os.path.basename(img_path))[0]
+            npz_path = os.path.join(npz_dir, f"{stem}.npz")
+
+            if not os.path.exists(npz_path):
+                with open(debug_log, "a") as f:
+                    f.write(f"  npz_missing={npz_path}\n")
                 continue
 
-            outputs = self.estimator.process_one_image(file_path, bbox_thr=0.8, use_mask=False)
+            npz_files.append(npz_path)
+            perf_info = summary_by_path.get(img_path, {})
+            perf = _perf_str(perf_info)
 
-            originals.append((to_uint8(img_bgr), os.path.basename(file_path)))
+            with open(debug_log, "a") as f:
+                f.write(f"  npz_ok={npz_path}\n")
 
-            if len(outputs) == 0:
-                keypoints_overlays.append((to_uint8(img_bgr.copy()), os.path.basename(file_path)))
-                keypoints_labeled.append((to_uint8(img_bgr.copy()), os.path.basename(file_path)))
-                mesh_overlays.append((to_uint8(img_bgr.copy()), os.path.basename(file_path)))
-                side_views.append((np.ones_like(img_bgr) * 255, os.path.basename(file_path)))
-                all_metadata.append(
-                    {
-                        "file": file_path,
-                        "num_people": 0,
-                        "message": "No people detected",
-                    }
-                )
+            if not render_mesh:
+                render_notes.append(f"{stem}: render=skipped ({perf})")
                 continue
 
-            keypoints_img = self.render_keypoints(img_bgr, outputs)
-            keypoints_lbl_img = self.render_keypoints_labeled(img_bgr, outputs)
-            if render_mode == "Fast Pose (No Mesh)":
-                mesh_img = to_uint8(img_bgr.copy())
-                side_img = np.ones_like(img_bgr) * 255
-            else:
-                try:
-                    mesh_img, side_img = self.render_mesh_views_subprocess(
-                        img_bgr, outputs, self.estimator.faces
-                    )
-                except Exception as e:
-                    # On macOS + Gradio worker threads, pyglet can fail to create
-                    # an offscreen context. Keep GUI responsive and return keypoints.
-                    mesh_img = to_uint8(img_bgr.copy())
-                    side_img = np.ones_like(img_bgr) * 255
-                    warnings.append(
-                        f"{os.path.basename(file_path)}: mesh rendering skipped ({type(e).__name__}: {e})"
-                    )
-                    print(warnings[-1])
+            # ---- Render via subprocess (required on macOS: pyrender needs main thread) ----
+            try:
+                out_dir = os.path.join(mesh_dir, stem)
+                os.makedirs(out_dir, exist_ok=True)
+                render_t0 = time.perf_counter()
+                cmd = [
+                    sys.executable,
+                    os.path.join(os.path.dirname(__file__), "tools", "render_npz.py"),
+                    "--npz", npz_path,
+                    "--output_dir", out_dir,
+                    "--image", img_path,
+                ]
+                proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+                render_ms = (time.perf_counter() - render_t0) * 1000.0
 
-            keypoints_overlays.append((keypoints_img, os.path.basename(file_path)))
-            keypoints_labeled.append((keypoints_lbl_img, os.path.basename(file_path)))
-            mesh_overlays.append((mesh_img, os.path.basename(file_path)))
-            side_views.append((side_img, os.path.basename(file_path)))
+                mesh_path = os.path.join(out_dir, "mesh_overlay.jpg")
+                side_path = os.path.join(out_dir, "mesh_side.jpg")
 
-            person_summary = self.build_person_summary(outputs)
-            cur_meta = {
-                "file": file_path,
-                "num_people": len(outputs),
-                "people": person_summary,
-            }
-            if warnings:
-                cur_meta["warnings"] = warnings[-1:]
-            all_metadata.append(cur_meta)
+                with open(debug_log, "a") as f:
+                    f.write(f"  render_cmd={' '.join(cmd)}\n")
+                    f.write(f"  render_rc={proc.returncode} render_ms={render_ms:.1f}\n")
+                    if proc.stderr:
+                        f.write(f"  render_stderr={proc.stderr.strip()}\n")
 
-            # Save rendered output bundle
-            stem = os.path.splitext(os.path.basename(file_path))[0]
-            save_dir = os.path.join(self.output_dir, stem)
-            os.makedirs(save_dir, exist_ok=True)
-            cv2.imwrite(os.path.join(save_dir, "original.jpg"), to_uint8(img_bgr))
-            cv2.imwrite(os.path.join(save_dir, "keypoints.jpg"), to_uint8(keypoints_img))
-            labeled_path = os.path.join(save_dir, "keypoints_labeled.jpg")
-            cv2.imwrite(labeled_path, to_uint8(keypoints_lbl_img))
-            cv2.imwrite(os.path.join(save_dir, "mesh_overlay.jpg"), to_uint8(mesh_img))
-            cv2.imwrite(os.path.join(save_dir, "mesh_side.jpg"), to_uint8(side_img))
-            with open(os.path.join(save_dir, "metadata.json"), "w") as f:
-                json.dump(all_metadata[-1], f, indent=2)
-            labeled_paths.append(labeled_path)
-            data_export_paths.extend(self.write_data_exports(save_dir, stem, outputs))
+                if proc.returncode != 0:
+                    raise RuntimeError(f"render subprocess rc={proc.returncode}")
+                if not (os.path.exists(mesh_path) and os.path.exists(side_path)):
+                    raise RuntimeError("render outputs missing on disk")
+
+                overlay_tuple = _img_tuple(mesh_path)
+                side_tuple = _img_tuple(side_path)
+                if overlay_tuple is not None:
+                    mesh_gallery.append(overlay_tuple)
+                if side_tuple is not None:
+                    side_gallery.append(side_tuple)
+
+                render_notes.append(
+                    f"{stem}: render=ok render_ms={render_ms:.1f} ({perf})"
+                )
+            except Exception as e:
+                with open(debug_log, "a") as f:
+                    f.write(f"  render_exception={type(e).__name__}: {e}\n")
+                render_notes.append(f"{stem}: render=failed ({type(e).__name__}: {e})")
 
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         status = (
-            f"Done at {ts}. Device: {self.device}. Mode: {render_mode}. "
-            f"Processed {len(files)} file(s)."
+            f"Done {ts}. Processed {len(image_paths)} file(s). NPZ: {len(npz_files)}. "
+            f"render_mesh={bool(render_mesh)}"
         )
-        if warnings:
-            status += " Mesh rendering skipped for some files (see Metadata warnings)."
+        if render_notes:
+            status += " | " + " ; ".join(render_notes)
+        status += f" | debug_log={debug_log}"
+        return npz_files, mesh_gallery, side_gallery, status, npz_files
 
-        return (
-            originals,
-            keypoints_overlays,
-            keypoints_labeled,
-            mesh_overlays,
-            side_views,
-            {"runs": all_metadata},
-            status,
-            labeled_paths,
-            data_export_paths,
+    def open_viewer(self, npz_files):
+        # Try to find a valid NPZ from Gradio value
+        candidates = _collect_paths(npz_files)
+        npz_path = ""
+        for p in candidates:
+            if p and os.path.exists(p):
+                npz_path = p
+                break
+
+        # Fallback: most recently modified NPZ from output folder
+        if not npz_path:
+            npz_dir = os.path.join(self.output_dir, "npz")
+            if os.path.isdir(npz_dir):
+                npz_list = [
+                    os.path.join(npz_dir, f)
+                    for f in os.listdir(npz_dir)
+                    if f.lower().endswith(".npz")
+                ]
+                if npz_list:
+                    npz_path = max(npz_list, key=os.path.getmtime)
+
+        if not npz_path:
+            return "No NPZ file selected."
+
+        # Preflight: trimesh interactive viewer requires pyglet<2
+        check = subprocess.run(
+            [sys.executable, "-c", "import trimesh.viewer.windowed; print('ok')"],
+            capture_output=True, text=True,
         )
+        if check.returncode != 0:
+            return (
+                "3D viewer dependency missing. "
+                "Install with: pip install 'pyglet<2' (inside this venv). "
+                f"details={check.stderr.strip() or check.stdout.strip()}"
+            )
 
+        try:
+            subprocess.Popen(
+                [
+                    sys.executable,
+                    os.path.join(os.path.dirname(__file__), "tools", "view_npz_3d.py"),
+                    "--npz",
+                    npz_path,
+                ]
+            )
+            return f"Opened 3D viewer for: {os.path.basename(npz_path)}"
+        except Exception as e:
+            return (
+                f"Failed to open viewer: {type(e).__name__}: {e}. "
+                f"candidates={candidates}"
+            )
+
+
+# ---------------------------------------------------------------------------
+# Gradio app builder
+# ---------------------------------------------------------------------------
 
 def build_app(checkpoint_path: str, mhr_path: str, output_dir: str):
-    runner = Sam3DGuiRunner(
-        checkpoint_path=checkpoint_path,
-        mhr_path=mhr_path,
-        output_dir=output_dir,
-    )
+    runner = ThinGui(checkpoint_path, mhr_path, output_dir)
 
-    with gr.Blocks(title="SAM 3D Body GUI") as demo:
-        gr.Markdown("## SAM 3D Body GUI\nDrag & drop or select one/more images, then process and inspect outputs in separate panels.")
+    with gr.Blocks(title="SAM3D Thin GUI v3") as demo:
+        gr.Markdown("## SAM3D Thin GUI v3\nIn-process render · Estimator caching · Thread-safe")
+        gr.Markdown(
+            f"**Build:** thin-gui-v3  |  **PID:** {os.getpid()}  |  "
+            f"**Checkpoint:** `{os.path.basename(checkpoint_path)}`"
+        )
 
         with gr.Row():
             with gr.Column(scale=1):
-                file_input = gr.File(
-                    label="Input images",
-                    file_count="multiple",
-                    file_types=["image"],
+                files = gr.File(label="Input JPEG/PNG", file_count="multiple", file_types=["image"])
+                max_side = gr.Slider(0, 2000, value=1280, step=32, label="max_side (0 disables resize)")
+                inference_type = gr.Radio(
+                    choices=["full", "body"],
+                    value="full",
+                    label="Inference type (body=faster, no hand detail)",
                 )
-                render_mode = gr.Radio(
-                    choices=["Fast Pose (No Mesh)", "Full Render (Mesh + Side View)"],
-                    value="Fast Pose (No Mesh)",
-                    label="Processing mode",
-                    info="Use Fast Pose for fastest keypoint/data export workflow. Switch to Full Render when you need mesh visuals.",
-                )
-                run_btn = gr.Button("Process", variant="primary")
-                status = gr.Textbox(label="Status", value=f"Ready. Device preference: {runner.device}")
+                single_person = gr.Checkbox(value=True, label="Single person mode")
+                save_compressed = gr.Checkbox(value=False, label="Compress NPZ (slower)")
+                render_mesh = gr.Checkbox(value=False, label="Also render mesh images")
+                cache_dir = gr.Textbox(value="./output/fast_npz_cache", label="Cache directory (optional)")
+
+                with gr.Row():
+                    run_btn = gr.Button("Run", variant="primary")
+                    batch_preset_btn = gr.Button("⚡ Batch Preset", variant="secondary")
+
+                status = gr.Textbox(label="Status")
 
             with gr.Column(scale=2):
-                with gr.Tabs():
-                    with gr.Tab("Original"):
-                        out_original = gr.Gallery(label="Original images", columns=2, height=350)
-                    with gr.Tab("2D Keypoints"):
-                        out_keypoints = gr.Gallery(label="Keypoints overlay", columns=2, height=350)
-                    with gr.Tab("2D Keypoints + Labels"):
-                        out_keypoints_labeled = gr.Gallery(
-                            label="Labeled keypoints (click image to open large)",
-                            columns=2,
-                            height=500,
-                        )
-                    with gr.Tab("Mesh Overlay"):
-                        out_mesh = gr.Gallery(label="Mesh overlay", columns=2, height=350)
-                    with gr.Tab("Side View"):
-                        out_side = gr.Gallery(label="Mesh side view", columns=2, height=350)
-                    with gr.Tab("Metadata"):
-                        out_meta = gr.JSON(label="Per-image / per-person summary")
-                    with gr.Tab("Open Labeled Image"):
-                        out_labeled_files = gr.File(
-                            label="Open/download full-size labeled keypoint images",
-                            file_count="multiple",
-                        )
-                    with gr.Tab("Data Exports"):
-                        out_export_files = gr.File(
-                            label="Download raw data (JSON/CSV/NPZ)",
-                            file_count="multiple",
-                        )
+                npz_files = gr.File(label="NPZ outputs", file_count="multiple")
+                mesh_gallery = gr.Gallery(label="Mesh overlay", columns=2, height=300)
+                side_gallery = gr.Gallery(label="Mesh side view", columns=2, height=300)
+                open_3d_btn = gr.Button("Open interactive 3D viewer (first NPZ)")
+                open_3d_status = gr.Textbox(label="3D Viewer")
+
+        def apply_batch_preset():
+            """Set controls for maximum batch throughput."""
+            return (
+                960,       # max_side
+                "body",    # inference_type
+                True,      # single_person
+                False,     # save_compressed
+                False,     # render_mesh
+                "",        # cache_dir (skip hashing overhead)
+            )
+
+        batch_preset_btn.click(
+            fn=apply_batch_preset,
+            inputs=[],
+            outputs=[max_side, inference_type, single_person, save_compressed, render_mesh, cache_dir],
+            queue=False,
+        )
 
         run_btn.click(
-            fn=runner.process_files,
-            inputs=[file_input, render_mode],
-            outputs=[
-                out_original,
-                out_keypoints,
-                out_keypoints_labeled,
-                out_mesh,
-                out_side,
-                out_meta,
-                status,
-                out_labeled_files,
-                out_export_files,
-            ],
+            fn=runner.process,
+            inputs=[files, max_side, single_person, save_compressed, render_mesh, cache_dir, inference_type],
+            outputs=[npz_files, mesh_gallery, side_gallery, status, npz_files],
+            queue=False,
+        )
+
+        open_3d_btn.click(
+            fn=runner.open_viewer,
+            inputs=[npz_files],
+            outputs=[open_3d_status],
             queue=False,
         )
 
     return demo
 
 
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
 def parse_args():
-    parser = argparse.ArgumentParser(description="SAM 3D Body Gradio GUI")
-    parser.add_argument(
-        "--checkpoint_path",
-        default="./checkpoints/sam-3d-body-dinov3/model.ckpt",
-        type=str,
-        help="Path to SAM 3D Body checkpoint",
-    )
-    parser.add_argument(
-        "--mhr_path",
-        default="./checkpoints/sam-3d-body-dinov3/assets/mhr_model.pt",
-        type=str,
-        help="Path to MHR model asset",
-    )
-    parser.add_argument(
-        "--output_dir",
-        default="./output/gui",
-        type=str,
-        help="Directory for GUI run outputs",
-    )
-    parser.add_argument("--host", default="127.0.0.1", type=str)
-    parser.add_argument("--port", default=7860, type=int)
-    parser.add_argument("--share", action="store_true")
-    return parser.parse_args()
+    p = argparse.ArgumentParser(description="SAM3D thin GUI v3")
+    p.add_argument("--checkpoint_path", default="./checkpoints/sam-3d-body-dinov3/model.ckpt", type=str)
+    p.add_argument("--mhr_path", default="./checkpoints/sam-3d-body-dinov3/assets/mhr_model.pt", type=str)
+    p.add_argument("--output_dir", default="./output/gui", type=str)
+    p.add_argument("--host", default="127.0.0.1", type=str)
+    p.add_argument("--port", default=7862, type=int)
+    return p.parse_args()
 
 
 if __name__ == "__main__":
     args = parse_args()
+    _kill_stale(args.port)
+    _write_pid()
     app = build_app(args.checkpoint_path, args.mhr_path, args.output_dir)
-    app.launch(server_name=args.host, server_port=args.port, share=args.share)
+    app.launch(server_name=args.host, server_port=args.port)
