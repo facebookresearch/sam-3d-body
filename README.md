@@ -125,6 +125,26 @@ cv2.imwrite("output.jpg", rend_img.astype(np.uint8))
 
 For a complete demo with visualization, see [notebook/demo_human.ipynb](notebook/demo_human.ipynb).
 
+### GUI (Drag & Drop + Multi-Panel Outputs)
+
+You can launch a local GUI that supports drag/drop or file selection and displays outputs in separate tabs:
+- Original image
+- 2D keypoints overlay
+- Mesh overlay
+- Side-view mesh
+- Structured metadata (bbox, focal length, keypoint/vertex counts)
+
+```bash
+python gui_app.py \
+  --checkpoint_path ./checkpoints/sam-3d-body-dinov3/model.ckpt \
+  --mhr_path ./checkpoints/sam-3d-body-dinov3/assets/mhr_model.pt \
+  --output_dir ./output/gui
+```
+
+Then open: `http://127.0.0.1:7860`
+
+> Note: `gradio` is required for the GUI. If missing, install with `pip install gradio`.
+
 
 ## Model Description
 
