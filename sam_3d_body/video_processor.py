@@ -1,14 +1,21 @@
 from __future__ import annotations
 
+import shutil
+import tempfile
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
+from urllib.request import urlopen
 
 import cv2
 import numpy as np
 
 from .sam_3d_body_estimator import SAM3DBodyEstimator
 from .technique_alignment import SkeletonSequence
+
+_REMOTE_VIDEO_SCHEMES = {"http", "https"}
 
 
 @dataclass
@@ -88,6 +95,41 @@ def _select_person_output(
     return max(outputs, key=lambda item: _bbox_area(np.asarray(item["bbox"], dtype=np.float32)))
 
 
+def _is_remote_video_path(video_path: str) -> bool:
+    parsed = urlparse(video_path)
+    return parsed.scheme in _REMOTE_VIDEO_SCHEMES and bool(parsed.netloc)
+
+
+@contextmanager
+def _resolve_video_file(video_path: str | Path):
+    raw_path = str(video_path)
+    if _is_remote_video_path(raw_path):
+        parsed = urlparse(raw_path)
+        suffix = Path(parsed.path).suffix or ".mp4"
+        temp_file = tempfile.NamedTemporaryFile(
+            prefix="sam3db_video_",
+            suffix=suffix,
+            delete=False,
+        )
+        temp_path = Path(temp_file.name)
+        temp_file.close()
+
+        try:
+            with urlopen(raw_path, timeout=30) as response, temp_path.open("wb") as output:
+                shutil.copyfileobj(response, output)
+            yield temp_path
+            return
+        except Exception as exc:
+            raise FileNotFoundError(f"Video not found: {raw_path}") from exc
+        finally:
+            temp_path.unlink(missing_ok=True)
+
+    local_file = Path(raw_path)
+    if not local_file.exists():
+        raise FileNotFoundError(f"Video not found: {local_file}")
+    yield local_file
+
+
 def extract_skeleton_sequence_from_video(
     video_path: str | Path,
     estimator: SAM3DBodyEstimator,
@@ -96,81 +138,78 @@ def extract_skeleton_sequence_from_video(
     joint_names: tuple[str, ...] | None = None,
 ) -> SkeletonSequence:
     config = config or VideoExtractionConfig()
-    video_file = Path(video_path)
-    if not video_file.exists():
-        raise FileNotFoundError(f"Video not found: {video_file}")
+    with _resolve_video_file(video_path) as video_file:
+        cap = cv2.VideoCapture(str(video_file))
+        if not cap.isOpened():
+            raise ValueError(f"Failed to open video: {video_file}")
 
-    cap = cv2.VideoCapture(str(video_file))
-    if not cap.isOpened():
-        raise ValueError(f"Failed to open video: {video_file}")
+        source_fps = float(cap.get(cv2.CAP_PROP_FPS))
+        if source_fps <= 0:
+            source_fps = max(1.0, config.target_fps)
+        sample_every_n_frames = max(1, int(round(source_fps / max(config.target_fps, 1e-6))))
 
-    source_fps = float(cap.get(cv2.CAP_PROP_FPS))
-    if source_fps <= 0:
-        source_fps = max(1.0, config.target_fps)
-    sample_every_n_frames = max(1, int(round(source_fps / max(config.target_fps, 1e-6))))
+        start_frame = max(0, int(round(config.start_time_sec * source_fps)))
+        end_frame = (
+            int(round(config.end_time_sec * source_fps))
+            if config.end_time_sec is not None
+            else None
+        )
 
-    start_frame = max(0, int(round(config.start_time_sec * source_fps)))
-    end_frame = (
-        int(round(config.end_time_sec * source_fps))
-        if config.end_time_sec is not None
-        else None
-    )
+        keypoints_sequence: list[np.ndarray] = []
+        timestamps: list[float] = []
+        frame_index = 0
+        previous_bbox: np.ndarray | None = None
 
-    keypoints_sequence: list[np.ndarray] = []
-    timestamps: list[float] = []
-    frame_index = 0
-    previous_bbox: np.ndarray | None = None
+        try:
+            while True:
+                ok, frame_bgr = cap.read()
+                if not ok:
+                    break
+                if frame_index < start_frame:
+                    frame_index += 1
+                    continue
+                if end_frame is not None and frame_index > end_frame:
+                    break
+                if ((frame_index - start_frame) % sample_every_n_frames) != 0:
+                    frame_index += 1
+                    continue
 
-    try:
-        while True:
-            ok, frame_bgr = cap.read()
-            if not ok:
-                break
-            if frame_index < start_frame:
+                frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+                outputs = estimator.process_one_image(
+                    frame_rgb,
+                    bbox_thr=config.bbox_thr,
+                    use_mask=config.use_mask,
+                    inference_type=config.inference_type,
+                )
+                selected = _select_person_output(outputs, previous_bbox, selection_point_px)
+                if selected is None:
+                    frame_index += 1
+                    continue
+
+                if "pred_keypoints_3d" not in selected:
+                    frame_index += 1
+                    continue
+
+                keypoints = np.asarray(selected["pred_keypoints_3d"], dtype=np.float32)
+                if keypoints.ndim != 2 or keypoints.shape[1] != 3:
+                    frame_index += 1
+                    continue
+
+                keypoints_sequence.append(keypoints)
+                timestamps.append(frame_index / source_fps)
+                previous_bbox = np.asarray(selected["bbox"], dtype=np.float32)
+
+                if len(keypoints_sequence) >= config.max_frames:
+                    break
                 frame_index += 1
-                continue
-            if end_frame is not None and frame_index > end_frame:
-                break
-            if ((frame_index - start_frame) % sample_every_n_frames) != 0:
-                frame_index += 1
-                continue
+        finally:
+            cap.release()
 
-            frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-            outputs = estimator.process_one_image(
-                frame_rgb,
-                bbox_thr=config.bbox_thr,
-                use_mask=config.use_mask,
-                inference_type=config.inference_type,
-            )
-            selected = _select_person_output(outputs, previous_bbox, selection_point_px)
-            if selected is None:
-                frame_index += 1
-                continue
+        if not keypoints_sequence:
+            raise ValueError("No valid skeleton frames extracted from video")
 
-            if "pred_keypoints_3d" not in selected:
-                frame_index += 1
-                continue
-
-            keypoints = np.asarray(selected["pred_keypoints_3d"], dtype=np.float32)
-            if keypoints.ndim != 2 or keypoints.shape[1] != 3:
-                frame_index += 1
-                continue
-
-            keypoints_sequence.append(keypoints)
-            timestamps.append(frame_index / source_fps)
-            previous_bbox = np.asarray(selected["bbox"], dtype=np.float32)
-
-            if len(keypoints_sequence) >= config.max_frames:
-                break
-            frame_index += 1
-    finally:
-        cap.release()
-
-    if not keypoints_sequence:
-        raise ValueError("No valid skeleton frames extracted from video")
-
-    return SkeletonSequence(
-        keypoints_3d=np.stack(keypoints_sequence, axis=0),
-        timestamps=np.asarray(timestamps, dtype=np.float32),
-        joint_names=joint_names,
-    )
+        return SkeletonSequence(
+            keypoints_3d=np.stack(keypoints_sequence, axis=0),
+            timestamps=np.asarray(timestamps, dtype=np.float32),
+            joint_names=joint_names,
+        )

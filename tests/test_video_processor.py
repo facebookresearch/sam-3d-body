@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 from pathlib import Path
 from typing import Any
 
@@ -102,3 +103,47 @@ def test_extract_skeleton_sequence_honors_selection_point(tmp_path: Path) -> Non
     assert sequence.num_frames == 2
     # First joint should come from the right-side person's synthetic keypoints.
     assert float(sequence.keypoints_3d[0, 0, 0]) == 9.0
+
+
+def test_extract_skeleton_sequence_supports_http_video_path(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    source_video = tmp_path / "remote-source.mp4"
+    _write_dummy_video(source_video, fps=10.0, num_frames=8)
+    source_bytes = source_video.read_bytes()
+
+    class _FakeResponse:
+        def __init__(self, payload: bytes) -> None:
+            self._buffer = io.BytesIO(payload)
+
+        def read(self, size: int = -1) -> bytes:
+            return self._buffer.read(size)
+
+        def close(self) -> None:
+            self._buffer.close()
+
+        def __enter__(self) -> "_FakeResponse":
+            return self
+
+        def __exit__(self, *_args: Any) -> bool:
+            self.close()
+            return False
+
+    def _fake_urlopen(url: str, timeout: int = 30) -> _FakeResponse:
+        assert url == "https://example.com/test-video.mp4"
+        assert timeout == 30
+        return _FakeResponse(source_bytes)
+
+    monkeypatch.setattr("sam_3d_body.video_processor.urlopen", _fake_urlopen)
+
+    sequence = extract_skeleton_sequence_from_video(
+        video_path="https://example.com/test-video.mp4",
+        estimator=_SinglePersonEstimator(),  # type: ignore[arg-type]
+        config=VideoExtractionConfig(
+            target_fps=5.0,
+            max_frames=3,
+        ),
+    )
+
+    assert sequence.num_frames == 3
+    assert sequence.num_joints == 4
