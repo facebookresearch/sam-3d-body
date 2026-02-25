@@ -13,6 +13,15 @@ from .technique_alignment import (
 )
 from .technique_pipeline import TechniqueAlignmentPipeline, TechniquePipelineConfig
 from .video_processor import VideoExtractionConfig, extract_skeleton_sequence_from_video
+from .reference_assets import (
+    DEFAULT_METADATA_FILENAME,
+    SUPPORTED_VIDEO_EXTENSIONS,
+    ReferenceVideoEntry,
+    build_reference_assets,
+    discover_reference_videos,
+    load_reference_manifest,
+    save_skeleton_sequence_npz,
+)
 
 __all__ = [
     "__version__",
@@ -29,4 +38,11 @@ __all__ = [
     "extract_skeleton_sequence_from_video",
     "TechniquePipelineConfig",
     "TechniqueAlignmentPipeline",
+    "DEFAULT_METADATA_FILENAME",
+    "SUPPORTED_VIDEO_EXTENSIONS",
+    "ReferenceVideoEntry",
+    "discover_reference_videos",
+    "load_reference_manifest",
+    "save_skeleton_sequence_npz",
+    "build_reference_assets",
 ]
