@@ -5,6 +5,8 @@ from typing import Any
 
 import cv2
 import numpy as np
+import pytest
+from pydantic import ValidationError
 
 from api.main import create_app
 from api.models import AlignmentInferenceRequest, VideoInferenceRequest
@@ -149,3 +151,31 @@ def test_infer_alignment_endpoint_supports_mixed_sources(tmp_path: Path) -> None
     assert payload["summary"]["numUserFrames"] == 3
     assert payload["summary"]["numReferenceFrames"] == 3
     assert payload["summary"]["numAlignedPairs"] >= 3
+
+
+def test_video_inference_request_uses_selection_bbox() -> None:
+    payload = VideoInferenceRequest.model_validate(
+        {
+            "videoPath": "/tmp/video.mp4",
+            "selectionBbox": [10, 20, 30, 40],
+        }
+    )
+    assert payload.selection_bbox_xyxy == (10.0, 20.0, 30.0, 40.0)
+
+
+def test_video_inference_request_rejects_legacy_fields() -> None:
+    with pytest.raises(ValidationError):
+        VideoInferenceRequest.model_validate(
+            {
+                "videoPath": "/tmp/video.mp4",
+                "jointNames": ["a", "b", "c"],
+            }
+        )
+
+    with pytest.raises(ValidationError):
+        VideoInferenceRequest.model_validate(
+            {
+                "videoPath": "/tmp/video.mp4",
+                "selectionPointPx": [10, 20],
+            }
+        )

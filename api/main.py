@@ -121,7 +121,7 @@ def _sequence_from_source(
             video_path=source.video_path,
             estimator=estimator,
             config=video_config,
-            selection_point_px=source.selection_point_px,
+            selection_bbox_xyxy=source.selection_bbox_xyxy,
         )
     raise ValueError("Invalid sequence source.")
 
@@ -176,10 +176,7 @@ def create_app(
                 video_path=payload.video_path,
                 estimator=_ensure_estimator(state),
                 config=payload.video_config.to_domain(),
-                selection_point_px=payload.selection_point_px,
-                joint_names=tuple(payload.joint_names)
-                if payload.joint_names is not None
-                else None,
+                selection_bbox_xyxy=payload.selection_bbox_xyxy,
             )
             saved_npz_path = None
             if payload.save_npz_path is not None:

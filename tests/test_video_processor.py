@@ -89,7 +89,7 @@ def test_extract_skeleton_sequence_samples_by_target_fps(tmp_path: Path) -> None
     assert np.allclose(sequence.timestamps, np.array([0.0, 0.2, 0.4, 0.6], dtype=np.float32), atol=0.05)
 
 
-def test_extract_skeleton_sequence_honors_selection_point(tmp_path: Path) -> None:
+def test_extract_skeleton_sequence_honors_selection_bbox(tmp_path: Path) -> None:
     video_path = tmp_path / "selection.mp4"
     _write_dummy_video(video_path, fps=8.0, num_frames=4)
 
@@ -97,7 +97,7 @@ def test_extract_skeleton_sequence_honors_selection_point(tmp_path: Path) -> Non
         video_path=video_path,
         estimator=_TwoPersonEstimator(),  # type: ignore[arg-type]
         config=VideoExtractionConfig(target_fps=8.0, max_frames=2),
-        selection_point_px=(100.0, 10.0),  # near right person bbox
+        selection_bbox_xyxy=(80.0, 0.0, 119.0, 40.0),
     )
 
     assert sequence.num_frames == 2

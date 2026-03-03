@@ -34,6 +34,7 @@ class SAM3DBodyEstimator:
         self.sam = human_segmentor
         self.fov_estimator = fov_estimator
         self.thresh_wrist_angle = 1.4
+        self._rgb_input_notice_emitted = False
 
         # For mesh visualization
         self.faces = self.model.head_pose.faces.cpu().numpy()
@@ -100,7 +101,12 @@ class SAM3DBodyEstimator:
             img = load_image(img, backend="cv2", image_format="bgr")
             image_format = "bgr"
         else:
-            print("####### Please make sure the input image is in RGB format")
+            if not self._rgb_input_notice_emitted:
+                print(
+                    "Input ndarray is assumed to be RGB. "
+                    "If your source is OpenCV BGR, convert with cv2.cvtColor(..., cv2.COLOR_BGR2RGB)."
+                )
+                self._rgb_input_notice_emitted = True
             image_format = "rgb"
         height, width = img.shape[:2]
 

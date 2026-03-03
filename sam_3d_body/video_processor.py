@@ -65,9 +65,38 @@ def _point_in_bbox(point_px: tuple[float, float], bbox: np.ndarray) -> bool:
     return x1 <= x <= x2 and y1 <= y <= y2
 
 
+def _validate_selection_bbox_xyxy(selection_bbox_xyxy: tuple[float, float, float, float]) -> np.ndarray:
+    selection_bbox = np.asarray(selection_bbox_xyxy, dtype=np.float32).reshape(-1)
+    if selection_bbox.shape[0] != 4:
+        raise ValueError("selectionBbox must contain exactly 4 values: [x1, y1, x2, y2].")
+    x1, y1, x2, y2 = selection_bbox.tolist()
+    if x2 <= x1 or y2 <= y1:
+        raise ValueError("selectionBbox must satisfy x2 > x1 and y2 > y1.")
+    return selection_bbox
+
+
+def _select_person_output_from_bbox(
+    outputs: list[dict[str, Any]],
+    selection_bbox: np.ndarray,
+) -> dict[str, Any]:
+    target_center = np.asarray(_bbox_center(selection_bbox), dtype=np.float32)
+
+    def _score(item: dict[str, Any]) -> tuple[float, float, float]:
+        output_bbox = np.asarray(item["bbox"], dtype=np.float32)
+        iou = _bbox_iou(selection_bbox, output_bbox)
+        center_distance = float(
+            np.linalg.norm(np.asarray(_bbox_center(output_bbox), dtype=np.float32) - target_center)
+        )
+        # Prioritize overlap first, then nearest center, then larger boxes.
+        return (iou, -center_distance, _bbox_area(output_bbox))
+
+    return max(outputs, key=_score)
+
+
 def _select_person_output(
     outputs: list[dict[str, Any]],
     previous_bbox: np.ndarray | None,
+    selection_bbox: np.ndarray | None,
     selection_point_px: tuple[float, float] | None,
 ) -> dict[str, Any] | None:
     if not outputs:
@@ -75,6 +104,9 @@ def _select_person_output(
 
     if previous_bbox is not None:
         return max(outputs, key=lambda item: _bbox_iou(previous_bbox, np.asarray(item["bbox"], dtype=np.float32)))
+
+    if selection_bbox is not None:
+        return _select_person_output_from_bbox(outputs, selection_bbox)
 
     if selection_point_px is not None:
         containing = [
@@ -134,10 +166,15 @@ def extract_skeleton_sequence_from_video(
     video_path: str | Path,
     estimator: SAM3DBodyEstimator,
     config: VideoExtractionConfig | None = None,
+    selection_bbox_xyxy: tuple[float, float, float, float] | None = None,
     selection_point_px: tuple[float, float] | None = None,
     joint_names: tuple[str, ...] | None = None,
 ) -> SkeletonSequence:
     config = config or VideoExtractionConfig()
+    selection_bbox: np.ndarray | None = None
+    if selection_bbox_xyxy is not None:
+        selection_bbox = _validate_selection_bbox_xyxy(selection_bbox_xyxy)
+
     with _resolve_video_file(video_path) as video_file:
         cap = cv2.VideoCapture(str(video_file))
         if not cap.isOpened():
@@ -181,7 +218,12 @@ def extract_skeleton_sequence_from_video(
                     use_mask=config.use_mask,
                     inference_type=config.inference_type,
                 )
-                selected = _select_person_output(outputs, previous_bbox, selection_point_px)
+                selected = _select_person_output(
+                    outputs,
+                    previous_bbox,
+                    selection_bbox,
+                    selection_point_px,
+                )
                 if selected is None:
                     frame_index += 1
                     continue

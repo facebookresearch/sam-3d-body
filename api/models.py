@@ -13,6 +13,16 @@ from sam_3d_body.technique_alignment import (
 from sam_3d_body.video_processor import VideoExtractionConfig
 
 
+def _validate_bbox_xyxy(
+    bbox: tuple[float, float, float, float],
+    *,
+    field_name: str,
+) -> None:
+    x1, y1, x2, y2 = (float(value) for value in bbox)
+    if x2 <= x1 or y2 <= y1:
+        raise ValueError(f"{field_name} must satisfy x2 > x1 and y2 > y1.")
+
+
 class VideoExtractionConfigModel(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
@@ -100,13 +110,21 @@ class VideoInferenceRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     video_path: str = Field(alias="videoPath")
-    selection_point_px: tuple[float, float] | None = Field(default=None, alias="selectionPointPx")
+    selection_bbox_xyxy: tuple[float, float, float, float] | None = Field(
+        default=None,
+        alias="selectionBbox",
+    )
     video_config: VideoExtractionConfigModel = Field(
         default_factory=VideoExtractionConfigModel,
         alias="videoConfig",
     )
-    joint_names: list[str] | None = Field(default=None, alias="jointNames")
     save_npz_path: str | None = Field(default=None, alias="saveNpzPath")
+
+    @model_validator(mode="after")
+    def validate_selection_bbox(self) -> "VideoInferenceRequest":
+        if self.selection_bbox_xyxy is not None:
+            _validate_bbox_xyxy(self.selection_bbox_xyxy, field_name="selectionBbox")
+        return self
 
 
 class VideoInferenceSummary(BaseModel):
@@ -132,7 +150,10 @@ class SequenceSourceModel(BaseModel):
     npz_path: str | None = Field(default=None, alias="npzPath")
     sequence: SkeletonSequenceModel | None = None
     video_path: str | None = Field(default=None, alias="videoPath")
-    selection_point_px: tuple[float, float] | None = Field(default=None, alias="selectionPointPx")
+    selection_bbox_xyxy: tuple[float, float, float, float] | None = Field(
+        default=None,
+        alias="selectionBbox",
+    )
     video_config: VideoExtractionConfigModel | None = Field(default=None, alias="videoConfig")
 
     @model_validator(mode="after")
@@ -143,10 +164,12 @@ class SequenceSourceModel(BaseModel):
         if num_sources != 1:
             raise ValueError("Exactly one of npzPath, sequence, videoPath must be provided.")
 
-        if self.video_path is None and self.selection_point_px is not None:
-            raise ValueError("selectionPointPx is only valid when videoPath is provided.")
+        if self.video_path is None and self.selection_bbox_xyxy is not None:
+            raise ValueError("selectionBbox is only valid when videoPath is provided.")
         if self.video_path is None and self.video_config is not None:
             raise ValueError("videoConfig is only valid when videoPath is provided.")
+        if self.selection_bbox_xyxy is not None:
+            _validate_bbox_xyxy(self.selection_bbox_xyxy, field_name="selectionBbox")
 
         return self
 
@@ -182,4 +205,3 @@ def build_video_summary(sequence: SkeletonSequence) -> VideoInferenceSummary:
 
 def dump_alias_model(model: BaseModel) -> dict[str, Any]:
     return model.model_dump(by_alias=True)
-
