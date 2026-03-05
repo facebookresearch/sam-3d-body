@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import json
+import shutil
+import tempfile
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
+from urllib.request import urlopen
 
 import numpy as np
 
@@ -13,6 +18,7 @@ except Exception:  # pragma: no cover - exercised via fallback tests
     _fastdtw = None
 
 PHASE_NAMES = ("preparation", "acceleration", "contact", "follow_through")
+_REMOTE_NPZ_SCHEMES = {"http", "https"}
 
 
 @dataclass
@@ -242,6 +248,41 @@ def _default_joint_names(num_joints: int) -> tuple[str, ...]:
     return tuple(f"joint_{joint_idx}" for joint_idx in range(num_joints))
 
 
+def _is_remote_npz_path(npz_path: str) -> bool:
+    parsed = urlparse(npz_path)
+    return parsed.scheme in _REMOTE_NPZ_SCHEMES and bool(parsed.netloc)
+
+
+@contextmanager
+def _resolve_npz_file(npz_path: str | Path):
+    raw_path = str(npz_path)
+    if _is_remote_npz_path(raw_path):
+        parsed = urlparse(raw_path)
+        suffix = Path(parsed.path).suffix or ".npz"
+        temp_file = tempfile.NamedTemporaryFile(
+            prefix="sam3db_npz_",
+            suffix=suffix,
+            delete=False,
+        )
+        temp_path = Path(temp_file.name)
+        temp_file.close()
+
+        try:
+            with urlopen(raw_path, timeout=30) as response, temp_path.open("wb") as output:
+                shutil.copyfileobj(response, output)
+            yield temp_path
+            return
+        except Exception as exc:
+            raise FileNotFoundError(f"Skeleton npz not found: {raw_path}") from exc
+        finally:
+            temp_path.unlink(missing_ok=True)
+
+    local_path = Path(raw_path)
+    if not local_path.exists():
+        raise FileNotFoundError(f"Skeleton npz not found: {local_path}")
+    yield local_path
+
+
 def build_alignment_report(
     user_sequence: SkeletonSequence,
     reference_sequence: SkeletonSequence,
@@ -353,25 +394,22 @@ def load_skeleton_sequence_npz(
     timestamps_key: str = "timestamps",
     joint_names_key: str = "joint_names",
 ) -> SkeletonSequence:
-    path = Path(npz_path)
-    if not path.exists():
-        raise FileNotFoundError(f"Skeleton npz not found: {path}")
+    with _resolve_npz_file(npz_path) as resolved_npz:
+        with np.load(resolved_npz, allow_pickle=True) as data:
+            if keypoints_key not in data:
+                raise ValueError(f"Missing key in npz: {keypoints_key}")
 
-    data = np.load(path, allow_pickle=True)
-    if keypoints_key not in data:
-        raise ValueError(f"Missing key in npz: {keypoints_key}")
+            keypoints = data[keypoints_key]
+            if timestamps_key in data:
+                timestamps = data[timestamps_key]
+            else:
+                timestamps = np.arange(keypoints.shape[0], dtype=np.float32)
 
-    keypoints = data[keypoints_key]
-    if timestamps_key in data:
-        timestamps = data[timestamps_key]
-    else:
-        timestamps = np.arange(keypoints.shape[0], dtype=np.float32)
-
-    joint_names: tuple[str, ...] | None = None
-    if joint_names_key in data:
-        raw_joint_names = data[joint_names_key].tolist()
-        if isinstance(raw_joint_names, (list, tuple)):
-            joint_names = tuple(str(name) for name in raw_joint_names)
+            joint_names: tuple[str, ...] | None = None
+            if joint_names_key in data:
+                raw_joint_names = data[joint_names_key].tolist()
+                if isinstance(raw_joint_names, (list, tuple)):
+                    joint_names = tuple(str(name) for name in raw_joint_names)
 
     return SkeletonSequence(
         keypoints_3d=keypoints,

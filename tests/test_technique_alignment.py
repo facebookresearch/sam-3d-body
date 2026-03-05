@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import numpy as np
 
 from sam_3d_body.technique_alignment import (
@@ -8,6 +9,7 @@ from sam_3d_body.technique_alignment import (
     SkeletonSequence,
     align_sequences,
     build_alignment_report,
+    load_skeleton_sequence_npz,
     normalize_skeleton_sequence,
 )
 
@@ -113,3 +115,44 @@ def test_build_alignment_report_outputs_expected_sections() -> None:
         "contact",
         "follow_through",
     }
+
+
+def test_load_skeleton_sequence_npz_supports_remote_url(tmp_path, monkeypatch) -> None:
+    local_npz = tmp_path / "reference.npz"
+    expected_keypoints = np.array(
+        [
+            [[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]],
+            [[0.1, 0.0, 0.0], [1.1, 1.0, 1.0]],
+        ],
+        dtype=np.float32,
+    )
+    expected_timestamps = np.array([0.0, 0.1], dtype=np.float32)
+    expected_joint_names = np.array(["hip", "wrist"], dtype=object)
+    np.savez(
+        local_npz,
+        keypoints_3d=expected_keypoints,
+        timestamps=expected_timestamps,
+        joint_names=expected_joint_names,
+    )
+    payload = local_npz.read_bytes()
+
+    class _FakeResponse(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            self.close()
+            return False
+
+    def _fake_urlopen(url: str, timeout: int = 30):
+        assert url == "https://example.com/reference.npz"
+        assert timeout == 30
+        return _FakeResponse(payload)
+
+    monkeypatch.setattr("sam_3d_body.technique_alignment.urlopen", _fake_urlopen)
+
+    sequence = load_skeleton_sequence_npz("https://example.com/reference.npz")
+    assert sequence.keypoints_3d.shape == (2, 2, 3)
+    assert np.allclose(sequence.keypoints_3d, expected_keypoints)
+    assert np.allclose(sequence.timestamps, expected_timestamps)
+    assert sequence.joint_names == ("hip", "wrist")
