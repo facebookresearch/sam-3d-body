@@ -7,15 +7,30 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
+import cv2
 import numpy as np
 
 from .sam_3d_body_estimator import SAM3DBodyEstimator
-from .technique_alignment import SkeletonSequence
-from .video_processor import VideoExtractionConfig, extract_skeleton_sequence_from_video
+from .technique_alignment import SkeletonSequence, normalize_skeleton_sequence
+from .video_processor import (
+    VideoExtractionConfig,
+    _resolve_video_file,
+    _select_person_output,
+)
 
 
 DEFAULT_METADATA_FILENAME = "metadata.json"
 SUPPORTED_VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
+RENDER_ASSET_SCHEMA_VERSION = "technique_reference_render.v1"
+
+
+@dataclass
+class ReferenceExtractionResult:
+    sequence: SkeletonSequence
+    selected_outputs: list[dict[str, Any]]
+    frame_indices: np.ndarray
+    source_fps: float
+    image_size_hw: tuple[int, int]
 
 
 def _slugify(value: str) -> str:
@@ -213,6 +228,214 @@ def save_skeleton_sequence_npz(
     np.savez(path, **payload)
 
 
+def _extract_reference_result(
+    *,
+    entry: ReferenceVideoEntry,
+    estimator: SAM3DBodyEstimator,
+) -> ReferenceExtractionResult:
+    with _resolve_video_file(entry.video_path) as video_file:
+        cap = cv2.VideoCapture(str(video_file))
+        if not cap.isOpened():
+            raise ValueError(f"Failed to open video: {video_file}")
+
+        source_fps = float(cap.get(cv2.CAP_PROP_FPS))
+        if source_fps <= 0:
+            source_fps = max(1.0, entry.video_config.target_fps)
+        sample_every_n_frames = max(
+            1, int(round(source_fps / max(entry.video_config.target_fps, 1e-6)))
+        )
+
+        start_frame = max(0, int(round(entry.video_config.start_time_sec * source_fps)))
+        end_frame = (
+            int(round(entry.video_config.end_time_sec * source_fps))
+            if entry.video_config.end_time_sec is not None
+            else None
+        )
+
+        keypoints_sequence: list[np.ndarray] = []
+        timestamps: list[float] = []
+        frame_indices: list[int] = []
+        selected_outputs: list[dict[str, Any]] = []
+
+        frame_index = 0
+        previous_bbox: np.ndarray | None = None
+        image_size_hw: tuple[int, int] | None = None
+        try:
+            while True:
+                ok, frame_bgr = cap.read()
+                if not ok:
+                    break
+                if frame_index < start_frame:
+                    frame_index += 1
+                    continue
+                if end_frame is not None and frame_index > end_frame:
+                    break
+                if ((frame_index - start_frame) % sample_every_n_frames) != 0:
+                    frame_index += 1
+                    continue
+
+                frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+                if image_size_hw is None:
+                    image_size_hw = (int(frame_rgb.shape[0]), int(frame_rgb.shape[1]))
+                outputs = estimator.process_one_image(
+                    frame_rgb,
+                    bbox_thr=entry.video_config.bbox_thr,
+                    use_mask=entry.video_config.use_mask,
+                    inference_type=entry.video_config.inference_type,
+                )
+
+                selected = _select_person_output(
+                    outputs,
+                    previous_bbox,
+                    None,
+                    entry.selection_point_px,
+                )
+                if selected is None:
+                    frame_index += 1
+                    continue
+                if "pred_keypoints_3d" not in selected:
+                    frame_index += 1
+                    continue
+
+                keypoints = np.asarray(selected["pred_keypoints_3d"], dtype=np.float32)
+                if keypoints.ndim != 2 or keypoints.shape[1] != 3:
+                    frame_index += 1
+                    continue
+
+                keypoints_sequence.append(keypoints)
+                timestamps.append(frame_index / source_fps)
+                frame_indices.append(frame_index)
+                selected_outputs.append(selected)
+
+                previous_bbox = np.asarray(selected["bbox"], dtype=np.float32)
+                if len(keypoints_sequence) >= entry.video_config.max_frames:
+                    break
+                frame_index += 1
+        finally:
+            cap.release()
+
+        if not keypoints_sequence:
+            raise ValueError("No valid skeleton frames extracted from video")
+        if image_size_hw is None:
+            raise ValueError("Failed to capture image size from video")
+
+        return ReferenceExtractionResult(
+            sequence=SkeletonSequence(
+                keypoints_3d=np.stack(keypoints_sequence, axis=0),
+                timestamps=np.asarray(timestamps, dtype=np.float32),
+                joint_names=None,
+            ),
+            selected_outputs=selected_outputs,
+            frame_indices=np.asarray(frame_indices, dtype=np.int32),
+            source_fps=float(source_fps),
+            image_size_hw=image_size_hw,
+        )
+
+
+def _stack_optional_field(
+    selected_outputs: list[dict[str, Any]],
+    key: str,
+) -> np.ndarray | None:
+    values: list[np.ndarray] = []
+    expected_shape: tuple[int, ...] | None = None
+    for output in selected_outputs:
+        if key not in output or output[key] is None:
+            return None
+        value = np.asarray(output[key])
+        if expected_shape is None:
+            expected_shape = value.shape
+        elif value.shape != expected_shape:
+            raise ValueError(
+                f"Inconsistent shape for field '{key}': {value.shape} vs {expected_shape}"
+            )
+        values.append(value)
+    if not values:
+        return None
+    return np.stack(values, axis=0)
+
+
+def _cast_float_array(array: np.ndarray, float_dtype: str) -> np.ndarray:
+    if not np.issubdtype(array.dtype, np.floating):
+        return array
+    target_dtype = np.float16 if float_dtype == "float16" else np.float32
+    if array.dtype == target_dtype:
+        return array
+    return array.astype(target_dtype)
+
+
+def save_render_asset_npz(
+    *,
+    extraction: ReferenceExtractionResult,
+    estimator: SAM3DBodyEstimator,
+    output_path: str | Path,
+    float_dtype: str = "float16",
+    include_masks: bool = False,
+) -> dict[str, Any]:
+    if float_dtype not in {"float16", "float32"}:
+        raise ValueError("float_dtype must be one of: float16, float32")
+
+    path = Path(output_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    image_height, image_width = extraction.image_size_hw
+    principal_point_xy = np.asarray(
+        [image_width * 0.5, image_height * 0.5], dtype=np.float32
+    )
+
+    payload: dict[str, Any] = {
+        "schema_version": np.asarray(RENDER_ASSET_SCHEMA_VERSION),
+        "keypoints_3d": extraction.sequence.keypoints_3d,
+        "keypoints_3d_normalized": normalize_skeleton_sequence(extraction.sequence),
+        "timestamps": extraction.sequence.timestamps,
+        "frame_indices": extraction.frame_indices,
+        "source_fps": np.asarray(extraction.source_fps, dtype=np.float32),
+        "image_size_hw": np.asarray(extraction.image_size_hw, dtype=np.int32),
+        "principal_point_xy": principal_point_xy,
+    }
+    if extraction.sequence.joint_names is not None:
+        payload["joint_names"] = np.asarray(extraction.sequence.joint_names, dtype=object)
+
+    optional_field_map = {
+        "bbox_xyxy": "bbox",
+        "keypoints_2d": "pred_keypoints_2d",
+        "vertices_3d": "pred_vertices",
+        "cam_t": "pred_cam_t",
+        "focal_length": "focal_length",
+        "global_rot": "global_rot",
+        "body_pose_params": "body_pose_params",
+        "hand_pose_params": "hand_pose_params",
+        "shape_params": "shape_params",
+        "scale_params": "scale_params",
+        "pred_joint_coords": "pred_joint_coords",
+        "pred_global_rots": "pred_global_rots",
+        "mhr_model_params": "mhr_model_params",
+    }
+    for payload_key, output_key in optional_field_map.items():
+        stacked = _stack_optional_field(extraction.selected_outputs, output_key)
+        if stacked is None:
+            continue
+        payload[payload_key] = stacked
+
+    if include_masks:
+        masks = _stack_optional_field(extraction.selected_outputs, "mask")
+        if masks is not None:
+            payload["masks"] = masks.astype(np.uint8)
+
+    if hasattr(estimator, "faces") and getattr(estimator, "faces") is not None:
+        payload["faces"] = np.asarray(getattr(estimator, "faces"), dtype=np.int32)
+
+    for key, value in list(payload.items()):
+        payload[key] = _cast_float_array(np.asarray(value), float_dtype)
+
+    np.savez_compressed(path, **payload)
+    return {
+        "path": str(path),
+        "schemaVersion": RENDER_ASSET_SCHEMA_VERSION,
+        "floatDtype": float_dtype,
+        "fields": sorted(payload.keys()),
+    }
+
+
 def _sequence_duration_seconds(sequence: SkeletonSequence) -> float:
     if sequence.num_frames <= 1:
         return 0.0
@@ -231,6 +454,8 @@ def _build_asset_metadata(
     entry: ReferenceVideoEntry,
     sequence: SkeletonSequence,
     output_npz: Path,
+    extraction: ReferenceExtractionResult,
+    render_asset: dict[str, Any],
 ) -> dict[str, Any]:
     return {
         "referenceId": entry.reference_id,
@@ -240,6 +465,10 @@ def _build_asset_metadata(
         "handedness": entry.handedness,
         "sourceVideoPath": str(entry.video_path),
         "skeletonPath": str(output_npz),
+        "renderAssetPath": render_asset["path"],
+        "renderAssetSchemaVersion": render_asset["schemaVersion"],
+        "renderAssetFloatDtype": render_asset["floatDtype"],
+        "renderAssetFields": render_asset["fields"],
         "selectionPointPx": (
             [entry.selection_point_px[0], entry.selection_point_px[1]]
             if entry.selection_point_px is not None
@@ -257,6 +486,9 @@ def _build_asset_metadata(
         "numFrames": sequence.num_frames,
         "numJoints": sequence.num_joints,
         "durationSec": _sequence_duration_seconds(sequence),
+        "sourceFps": extraction.source_fps,
+        "imageSizeHw": [extraction.image_size_hw[0], extraction.image_size_hw[1]],
+        "frameIndices": extraction.frame_indices.tolist(),
         "jointNames": list(sequence.joint_names) if sequence.joint_names is not None else None,
         "metadata": entry.metadata,
     }
@@ -269,6 +501,8 @@ def build_reference_assets(
     output_dir: str | Path,
     skeleton_version: str = "sam3db_v1",
     metadata_filename: str = DEFAULT_METADATA_FILENAME,
+    render_asset_float_dtype: str = "float16",
+    render_include_masks: bool = False,
     overwrite: bool = False,
 ) -> dict[str, Any]:
     if not entries:
@@ -294,24 +528,38 @@ def build_reference_assets(
                 f"Reference output already exists: {output_npz}. Set overwrite=True to replace."
             )
 
-        sequence = extract_skeleton_sequence_from_video(
-            video_path=entry.video_path,
+        extraction = _extract_reference_result(
+            entry=entry,
             estimator=estimator,
-            config=entry.video_config,
-            selection_point_px=entry.selection_point_px,
         )
+        sequence = extraction.sequence
         save_skeleton_sequence_npz(sequence, output_npz)
-        assets.append(_build_asset_metadata(entry, sequence, output_npz))
+        render_output_npz = output_root / f"{entry.reference_id}.render.npz"
+        if render_output_npz.exists() and not overwrite:
+            raise FileExistsError(
+                f"Reference render output already exists: {render_output_npz}. Set overwrite=True to replace."
+            )
+        render_asset = save_render_asset_npz(
+            extraction=extraction,
+            estimator=estimator,
+            output_path=render_output_npz,
+            float_dtype=render_asset_float_dtype,
+            include_masks=render_include_masks,
+        )
+        assets.append(_build_asset_metadata(entry, sequence, output_npz, extraction, render_asset))
 
     metadata = {
-        "schemaVersion": "technique_reference_assets.v1",
+        "schemaVersion": "technique_reference_assets.v2",
         "generatedAt": datetime.now(timezone.utc).isoformat(),
         "skeletonVersion": skeleton_version,
         "jointUnit": "model_space",
+        "renderAssetEnabled": True,
+        "renderAssetSchemaVersion": RENDER_ASSET_SCHEMA_VERSION,
+        "renderAssetFloatDtype": render_asset_float_dtype,
+        "renderAssetIncludeMasks": render_include_masks,
         "assetCount": len(assets),
         "assets": assets,
     }
     with metadata_path.open("w", encoding="utf-8") as f:
         json.dump(metadata, f, ensure_ascii=False, indent=2)
     return metadata
-

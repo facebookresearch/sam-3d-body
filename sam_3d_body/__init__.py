@@ -15,11 +15,13 @@ from .technique_pipeline import TechniqueAlignmentPipeline, TechniquePipelineCon
 from .video_processor import VideoExtractionConfig, extract_skeleton_sequence_from_video
 from .reference_assets import (
     DEFAULT_METADATA_FILENAME,
+    RENDER_ASSET_SCHEMA_VERSION,
     SUPPORTED_VIDEO_EXTENSIONS,
     ReferenceVideoEntry,
     build_reference_assets,
     discover_reference_videos,
     load_reference_manifest,
+    save_render_asset_npz,
     save_skeleton_sequence_npz,
 )
 
@@ -39,10 +41,12 @@ __all__ = [
     "TechniquePipelineConfig",
     "TechniqueAlignmentPipeline",
     "DEFAULT_METADATA_FILENAME",
+    "RENDER_ASSET_SCHEMA_VERSION",
     "SUPPORTED_VIDEO_EXTENSIONS",
     "ReferenceVideoEntry",
     "discover_reference_videos",
     "load_reference_manifest",
+    "save_render_asset_npz",
     "save_skeleton_sequence_npz",
     "build_reference_assets",
 ]

@@ -39,6 +39,7 @@ def _write_dummy_video(path: Path, fps: float, num_frames: int) -> None:
 class _DummyEstimator:
     def __init__(self) -> None:
         self.call_count = 0
+        self.faces = np.array([[0, 1, 2], [2, 3, 4]], dtype=np.int32)
 
     def process_one_image(self, _frame_rgb: np.ndarray, **_kwargs: Any) -> list[dict[str, Any]]:
         value = float(self.call_count)
@@ -52,7 +53,36 @@ class _DummyEstimator:
             ],
             dtype=np.float32,
         )
-        return [{"bbox": np.array([8, 8, 80, 72], dtype=np.float32), "pred_keypoints_3d": keypoints}]
+        keypoints_2d = keypoints[:, :2] * 4.0 + 16.0
+        vertices = np.array(
+            [
+                [value, 0.0, 0.0],
+                [value + 0.2, 0.1, 0.0],
+                [value + 0.4, 0.3, 0.0],
+                [value + 0.6, 0.4, 0.1],
+                [value + 0.8, 0.5, 0.2],
+            ],
+            dtype=np.float32,
+        )
+        return [
+            {
+                "bbox": np.array([8, 8, 80, 72], dtype=np.float32),
+                "pred_keypoints_3d": keypoints,
+                "pred_keypoints_2d": keypoints_2d,
+                "pred_vertices": vertices,
+                "pred_cam_t": np.array([0.1, -0.05, 3.2], dtype=np.float32),
+                "focal_length": np.float32(1200.0),
+                "global_rot": np.array([0.0, 0.1, 0.2], dtype=np.float32),
+                "body_pose_params": np.linspace(0.0, 1.0, 12, dtype=np.float32),
+                "hand_pose_params": np.linspace(0.0, 1.0, 6, dtype=np.float32),
+                "shape_params": np.linspace(-1.0, 1.0, 10, dtype=np.float32),
+                "scale_params": np.array([1.0], dtype=np.float32),
+                "pred_joint_coords": keypoints.copy(),
+                "pred_global_rots": np.tile(np.eye(3, dtype=np.float32), (4, 1, 1)),
+                "mhr_model_params": np.linspace(0.0, 1.0, 16, dtype=np.float32),
+                "mask": np.zeros((80, 120, 1), dtype=np.uint8),
+            }
+        ]
 
 
 def test_discover_reference_videos_filters_and_sorts(tmp_path: Path) -> None:
@@ -157,8 +187,10 @@ def test_build_reference_assets_writes_npz_and_metadata(tmp_path: Path) -> None:
         skeleton_version="test_v1",
     )
 
-    assert metadata["schemaVersion"] == "technique_reference_assets.v1"
+    assert metadata["schemaVersion"] == "technique_reference_assets.v2"
     assert metadata["skeletonVersion"] == "test_v1"
+    assert metadata["renderAssetEnabled"] is True
+    assert metadata["renderAssetSchemaVersion"] == "technique_reference_render.v1"
     assert metadata["assetCount"] == 2
     assert len(metadata["assets"]) == 2
 
@@ -174,7 +206,17 @@ def test_build_reference_assets_writes_npz_and_metadata(tmp_path: Path) -> None:
         assert "keypoints_3d" in npz_data
         assert "timestamps" in npz_data
         assert npz_data["keypoints_3d"].shape[2] == 3
-
+        assert asset["renderAssetPath"] is not None
+        render_npz_path = Path(asset["renderAssetPath"])
+        assert render_npz_path.exists()
+        render_data = np.load(render_npz_path, allow_pickle=True)
+        assert render_data["schema_version"].item() == "technique_reference_render.v1"
+        assert "vertices_3d" in render_data
+        assert "keypoints_2d" in render_data
+        assert "faces" in render_data
+        assert "frame_indices" in render_data
+        assert "image_size_hw" in render_data
+        assert render_data["vertices_3d"].shape[2] == 3
 
 def test_build_reference_assets_rejects_duplicate_reference_id(tmp_path: Path) -> None:
     video = tmp_path / "dup.mp4"
@@ -190,4 +232,3 @@ def test_build_reference_assets_rejects_duplicate_reference_id(tmp_path: Path) -
             estimator=_DummyEstimator(),  # type: ignore[arg-type]
             output_dir=tmp_path / "out",
         )
-
