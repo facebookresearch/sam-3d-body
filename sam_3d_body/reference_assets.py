@@ -14,6 +14,8 @@ from .sam_3d_body_estimator import SAM3DBodyEstimator
 from .technique_alignment import SkeletonSequence, normalize_skeleton_sequence
 from .video_processor import (
     VideoExtractionConfig,
+    _horizontal_fov_deg_from_intrinsics,
+    _normalize_cam_intrinsics,
     _resolve_video_file,
     _select_person_output,
 )
@@ -400,6 +402,7 @@ def save_render_asset_npz(
         "keypoints_2d": "pred_keypoints_2d",
         "vertices_3d": "pred_vertices",
         "cam_t": "pred_cam_t",
+        "cam_intrinsics": "cam_intrinsics",
         "focal_length": "focal_length",
         "global_rot": "global_rot",
         "body_pose_params": "body_pose_params",
@@ -415,6 +418,42 @@ def save_render_asset_npz(
         if stacked is None:
             continue
         payload[payload_key] = stacked
+
+    horizontal_fov_deg: np.ndarray | None = None
+    camera_source: str | None = None
+    if "cam_intrinsics" in payload:
+        cam_intrinsics = np.asarray(payload["cam_intrinsics"], dtype=np.float32)
+        if cam_intrinsics.ndim == 4 and cam_intrinsics.shape[1] == 1:
+            cam_intrinsics = cam_intrinsics[:, 0]
+        if cam_intrinsics.ndim == 3 and cam_intrinsics.shape[1:] == (3, 3):
+            payload["cam_intrinsics"] = cam_intrinsics
+            hfov_values: list[float] = []
+            for frame_intrinsics in cam_intrinsics:
+                normalized_intrinsics = _normalize_cam_intrinsics(frame_intrinsics)
+                hfov = _horizontal_fov_deg_from_intrinsics(
+                    normalized_intrinsics,
+                    float(image_width),
+                )
+                if hfov is None:
+                    hfov_values = []
+                    break
+                hfov_values.append(hfov)
+            if len(hfov_values) == int(cam_intrinsics.shape[0]):
+                horizontal_fov_deg = np.asarray(hfov_values, dtype=np.float32)
+                payload["horizontal_fov_deg"] = horizontal_fov_deg
+        else:
+            payload.pop("cam_intrinsics", None)
+
+    camera_source_values = _stack_optional_field(
+        extraction.selected_outputs,
+        "camera_source",
+    )
+    if camera_source_values is not None:
+        raw_sources = np.asarray(camera_source_values).reshape(-1).tolist()
+        normalized_sources = [str(item).strip() for item in raw_sources if str(item).strip()]
+        if normalized_sources:
+            camera_source = normalized_sources[0]
+            payload["camera_source"] = np.asarray(camera_source)
 
     if include_masks:
         masks = _stack_optional_field(extraction.selected_outputs, "mask")
@@ -433,6 +472,18 @@ def save_render_asset_npz(
         "schemaVersion": RENDER_ASSET_SCHEMA_VERSION,
         "floatDtype": float_dtype,
         "fields": sorted(payload.keys()),
+        "cameraSource": camera_source,
+        "horizontalFovDegCount": (
+            int(horizontal_fov_deg.shape[0]) if horizontal_fov_deg is not None else 0
+        ),
+        "horizontalFovDegRange": (
+            [
+                float(np.min(horizontal_fov_deg)),
+                float(np.max(horizontal_fov_deg)),
+            ]
+            if horizontal_fov_deg is not None and horizontal_fov_deg.size > 0
+            else None
+        ),
     }
 
 
@@ -469,6 +520,9 @@ def _build_asset_metadata(
         "renderAssetSchemaVersion": render_asset["schemaVersion"],
         "renderAssetFloatDtype": render_asset["floatDtype"],
         "renderAssetFields": render_asset["fields"],
+        "cameraSource": render_asset.get("cameraSource"),
+        "horizontalFovDegCount": render_asset.get("horizontalFovDegCount"),
+        "horizontalFovDegRange": render_asset.get("horizontalFovDegRange"),
         "selectionPointPx": (
             [entry.selection_point_px[0], entry.selection_point_px[1]]
             if entry.selection_point_px is not None
@@ -500,6 +554,8 @@ def build_reference_assets(
     estimator: SAM3DBodyEstimator,
     output_dir: str | Path,
     skeleton_version: str = "sam3db_v1",
+    fov_estimator_name: str | None = None,
+    fov_estimator_path: str | None = None,
     metadata_filename: str = DEFAULT_METADATA_FILENAME,
     render_asset_float_dtype: str = "float16",
     render_include_masks: bool = False,
@@ -552,6 +608,12 @@ def build_reference_assets(
         "schemaVersion": "technique_reference_assets.v2",
         "generatedAt": datetime.now(timezone.utc).isoformat(),
         "skeletonVersion": skeleton_version,
+        "fovEstimator": {
+            "name": fov_estimator_name,
+            "path": fov_estimator_path,
+        }
+        if fov_estimator_name is not None
+        else None,
         "jointUnit": "model_space",
         "renderAssetEnabled": True,
         "renderAssetSchemaVersion": RENDER_ASSET_SCHEMA_VERSION,

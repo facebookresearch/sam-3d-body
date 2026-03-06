@@ -80,6 +80,15 @@ class _DummyEstimator:
                 "pred_joint_coords": keypoints.copy(),
                 "pred_global_rots": np.tile(np.eye(3, dtype=np.float32), (4, 1, 1)),
                 "mhr_model_params": np.linspace(0.0, 1.0, 16, dtype=np.float32),
+                "cam_intrinsics": np.array(
+                    [
+                        [800.0, 0.0, 60.0],
+                        [0.0, 800.0, 40.0],
+                        [0.0, 0.0, 1.0],
+                    ],
+                    dtype=np.float32,
+                ),
+                "camera_source": "moge2",
                 "mask": np.zeros((80, 120, 1), dtype=np.uint8),
             }
         ]
@@ -189,6 +198,7 @@ def test_build_reference_assets_writes_npz_and_metadata(tmp_path: Path) -> None:
 
     assert metadata["schemaVersion"] == "technique_reference_assets.v2"
     assert metadata["skeletonVersion"] == "test_v1"
+    assert metadata["fovEstimator"] is None
     assert metadata["renderAssetEnabled"] is True
     assert metadata["renderAssetSchemaVersion"] == "technique_reference_render.v1"
     assert metadata["assetCount"] == 2
@@ -206,6 +216,9 @@ def test_build_reference_assets_writes_npz_and_metadata(tmp_path: Path) -> None:
         assert "keypoints_3d" in npz_data
         assert "timestamps" in npz_data
         assert npz_data["keypoints_3d"].shape[2] == 3
+        assert asset["cameraSource"] == "moge2"
+        assert asset["horizontalFovDegCount"] == int(npz_data["timestamps"].shape[0])
+        assert asset["horizontalFovDegRange"] is not None
         assert asset["renderAssetPath"] is not None
         render_npz_path = Path(asset["renderAssetPath"])
         assert render_npz_path.exists()
@@ -216,6 +229,9 @@ def test_build_reference_assets_writes_npz_and_metadata(tmp_path: Path) -> None:
         assert "faces" in render_data
         assert "frame_indices" in render_data
         assert "image_size_hw" in render_data
+        assert "cam_intrinsics" in render_data
+        assert "horizontal_fov_deg" in render_data
+        assert "camera_source" in render_data
         assert render_data["vertices_3d"].shape[2] == 3
 
 def test_build_reference_assets_rejects_duplicate_reference_id(tmp_path: Path) -> None:

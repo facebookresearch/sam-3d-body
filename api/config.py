@@ -17,6 +17,8 @@ class ApiSettings:
     checkpoint_path: str
     mhr_path: str
     device: str
+    fov_name: str
+    fov_path: str
     eager_model_load: bool = False
 
 
@@ -35,6 +37,7 @@ def load_api_settings() -> ApiSettings:
         checkpoint_path=os.getenv("SAM3DBODY_CHECKPOINT_PATH", str(default_checkpoint)),
         mhr_path=os.getenv("SAM3DBODY_MHR_PATH", str(default_mhr)),
         device=os.getenv("SAM3DBODY_DEVICE", "cuda"),
+        fov_name=os.getenv("SAM3DBODY_FOV_NAME", "moge2"),
+        fov_path=os.getenv("SAM3DBODY_FOV_PATH", ""),
         eager_model_load=_read_bool_env("SAM3DBODY_EAGER_MODEL_LOAD", False),
     )
-

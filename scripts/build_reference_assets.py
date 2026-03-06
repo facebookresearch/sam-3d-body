@@ -74,6 +74,16 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--device", default="cuda", help="Inference device.")
     parser.add_argument(
+        "--fov-name",
+        default="moge2",
+        help="FOV estimator name. Use empty string to disable FOV estimation.",
+    )
+    parser.add_argument(
+        "--fov-path",
+        default="",
+        help="Optional model path for FOV estimator (for moge2 checkpoint override).",
+    )
+    parser.add_argument(
         "--render-float-dtype",
         default="float16",
         choices=("float16", "float32"),
@@ -210,7 +220,22 @@ def _load_estimator(args: argparse.Namespace) -> SAM3DBodyEstimator:
         device=args.device,
         mhr_path=args.mhr_path,
     )
-    return SAM3DBodyEstimator(model, model_cfg)
+    fov_estimator = None
+    fov_name = _normalize_optional_str(args.fov_name)
+    if fov_name is not None:
+        from tools.build_fov_estimator import FOVEstimator
+
+        fov_estimator = FOVEstimator(
+            name=fov_name,
+            device=args.device,
+            path=_normalize_optional_str(args.fov_path) or "",
+        )
+
+    return SAM3DBodyEstimator(
+        model,
+        model_cfg,
+        fov_estimator=fov_estimator,
+    )
 
 
 def _run_command(command: list[str], *, cwd: Path) -> str:
@@ -563,6 +588,10 @@ def _publish_assets(args: argparse.Namespace, metadata: dict[str, Any]) -> dict[
             "sourceVideoPath": raw_asset.get("sourceVideoPath"),
             "selectionPointPx": raw_asset.get("selectionPointPx"),
             "videoConfig": raw_asset.get("videoConfig"),
+            "cameraSource": raw_asset.get("cameraSource"),
+            "horizontalFovDegCount": raw_asset.get("horizontalFovDegCount"),
+            "horizontalFovDegRange": raw_asset.get("horizontalFovDegRange"),
+            "fovEstimator": metadata.get("fovEstimator"),
             "renderAssetSchemaVersion": raw_asset.get("renderAssetSchemaVersion"),
             "renderAssetFloatDtype": raw_asset.get("renderAssetFloatDtype"),
             "renderAssetFields": raw_asset.get("renderAssetFields"),
@@ -630,6 +659,8 @@ def main() -> None:
         estimator=estimator,
         output_dir=args.output_dir,
         skeleton_version=args.skeleton_version,
+        fov_estimator_name=_normalize_optional_str(args.fov_name),
+        fov_estimator_path=_normalize_optional_str(args.fov_path),
         render_asset_float_dtype=args.render_float_dtype,
         render_include_masks=args.render_include_masks,
         overwrite=args.overwrite,

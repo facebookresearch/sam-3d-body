@@ -29,6 +29,39 @@ class VideoExtractionConfig:
     inference_type: str = "body"
 
 
+def _normalize_cam_intrinsics(value: Any) -> np.ndarray | None:
+    if value is None:
+        return None
+    try:
+        matrix = np.asarray(value, dtype=np.float32)
+    except Exception:
+        return None
+    if matrix.ndim == 3 and matrix.shape[0] == 1:
+        matrix = matrix[0]
+    if matrix.shape != (3, 3):
+        return None
+    return matrix
+
+
+def _horizontal_fov_deg_from_intrinsics(
+    cam_intrinsics: np.ndarray | None,
+    image_width: float,
+) -> float | None:
+    if cam_intrinsics is None:
+        return None
+    fx = float(cam_intrinsics[0, 0])
+    if not np.isfinite(fx) or fx <= 0:
+        return None
+    if not np.isfinite(image_width) or image_width <= 0:
+        return None
+    horizontal_fov_deg = float(np.degrees(2 * np.arctan(image_width / (2.0 * fx))))
+    if not np.isfinite(horizontal_fov_deg):
+        return None
+    if horizontal_fov_deg <= 0.0 or horizontal_fov_deg >= 180.0:
+        return None
+    return horizontal_fov_deg
+
+
 def _bbox_area(bbox: np.ndarray) -> float:
     x1, y1, x2, y2 = bbox.tolist()
     return max(0.0, x2 - x1) * max(0.0, y2 - y1)
@@ -169,7 +202,8 @@ def extract_skeleton_sequence_from_video(
     selection_bbox_xyxy: tuple[float, float, float, float] | None = None,
     selection_point_px: tuple[float, float] | None = None,
     joint_names: tuple[str, ...] | None = None,
-) -> SkeletonSequence:
+    return_camera_metadata: bool = False,
+) -> SkeletonSequence | tuple[SkeletonSequence, dict[str, Any] | None]:
     config = config or VideoExtractionConfig()
     selection_bbox: np.ndarray | None = None
     if selection_bbox_xyxy is not None:
@@ -194,6 +228,9 @@ def extract_skeleton_sequence_from_video(
 
         keypoints_sequence: list[np.ndarray] = []
         timestamps: list[float] = []
+        horizontal_fov_deg: list[float] = []
+        camera_timestamps: list[float] = []
+        camera_source: str | None = None
         frame_index = 0
         previous_bbox: np.ndarray | None = None
 
@@ -237,9 +274,23 @@ def extract_skeleton_sequence_from_video(
                     frame_index += 1
                     continue
 
+                timestamp_sec = frame_index / source_fps
                 keypoints_sequence.append(keypoints)
-                timestamps.append(frame_index / source_fps)
+                timestamps.append(timestamp_sec)
                 previous_bbox = np.asarray(selected["bbox"], dtype=np.float32)
+
+                cam_intrinsics = _normalize_cam_intrinsics(selected.get("cam_intrinsics"))
+                horizontal_fov = _horizontal_fov_deg_from_intrinsics(
+                    cam_intrinsics,
+                    image_width=float(frame_rgb.shape[1]),
+                )
+                if horizontal_fov is not None:
+                    horizontal_fov_deg.append(horizontal_fov)
+                    camera_timestamps.append(timestamp_sec)
+                    if camera_source is None:
+                        raw_camera_source = selected.get("camera_source")
+                        if isinstance(raw_camera_source, str) and raw_camera_source.strip():
+                            camera_source = raw_camera_source.strip()
 
                 if len(keypoints_sequence) >= config.max_frames:
                     break
@@ -250,8 +301,19 @@ def extract_skeleton_sequence_from_video(
         if not keypoints_sequence:
             raise ValueError("No valid skeleton frames extracted from video")
 
-        return SkeletonSequence(
+        sequence = SkeletonSequence(
             keypoints_3d=np.stack(keypoints_sequence, axis=0),
             timestamps=np.asarray(timestamps, dtype=np.float32),
             joint_names=joint_names,
         )
+        if not return_camera_metadata:
+            return sequence
+
+        camera_metadata: dict[str, Any] | None = None
+        if horizontal_fov_deg and len(horizontal_fov_deg) == len(camera_timestamps):
+            camera_metadata = {
+                "source": camera_source or "unknown",
+                "horizontalFovDeg": [float(value) for value in horizontal_fov_deg],
+                "timestamps": [float(value) for value in camera_timestamps],
+            }
+        return sequence, camera_metadata

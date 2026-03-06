@@ -28,6 +28,7 @@ from .models import (
     HealthResponse,
     SequenceSourceModel,
     SkeletonSequenceModel,
+    VideoInferenceCameraModel,
     VideoInferenceRequest,
     VideoInferenceResponse,
     build_video_summary,
@@ -44,19 +45,32 @@ class ServiceState:
 
 
 def _build_estimator(settings: ApiSettings) -> SAM3DBodyEstimator:
+    from tools.build_fov_estimator import FOVEstimator
+
     checkpoint_path = Path(settings.checkpoint_path)
     mhr_path = Path(settings.mhr_path)
     if not checkpoint_path.exists():
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
     if not mhr_path.exists():
         raise FileNotFoundError(f"MHR model not found: {mhr_path}")
+    if not settings.fov_name.strip():
+        raise ValueError("SAM3DBODY_FOV_NAME must be configured")
 
     model, model_cfg = load_sam_3d_body(
         checkpoint_path=str(checkpoint_path),
         device=settings.device,
         mhr_path=str(mhr_path),
     )
-    return SAM3DBodyEstimator(model, model_cfg)
+    fov_estimator = FOVEstimator(
+        name=settings.fov_name.strip(),
+        device=settings.device,
+        path=settings.fov_path.strip(),
+    )
+    return SAM3DBodyEstimator(
+        model,
+        model_cfg,
+        fov_estimator=fov_estimator,
+    )
 
 
 def _map_service_exception(exc: Exception) -> HTTPException:
@@ -172,11 +186,12 @@ def create_app(
     def infer_video(payload: VideoInferenceRequest) -> dict[str, Any]:
         state: ServiceState = app.state.service_state
         try:
-            sequence = extract_skeleton_sequence_from_video(
+            sequence, camera_metadata = extract_skeleton_sequence_from_video(
                 video_path=payload.video_path,
                 estimator=_ensure_estimator(state),
                 config=payload.video_config.to_domain(),
                 selection_bbox_xyxy=payload.selection_bbox_xyxy,
+                return_camera_metadata=True,
             )
             saved_npz_path = None
             if payload.save_npz_path is not None:
@@ -186,6 +201,11 @@ def create_app(
                 sequence=SkeletonSequenceModel.from_domain(sequence),
                 summary=build_video_summary(sequence),
                 savedNpzPath=saved_npz_path,
+                camera=(
+                    VideoInferenceCameraModel.model_validate(camera_metadata)
+                    if camera_metadata is not None
+                    else None
+                ),
             )
             return dump_alias_model(response)
         except Exception as exc:

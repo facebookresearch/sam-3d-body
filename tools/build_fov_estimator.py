@@ -6,6 +6,7 @@ import torch
 class FOVEstimator:
     def __init__(self, name="moge2", device="cuda", **kwargs):
         self.device = device
+        self.name = name
 
         if name == "moge2":
             print("########### Using fov estimator: MoGe2...")

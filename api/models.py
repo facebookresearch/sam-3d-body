@@ -136,12 +136,27 @@ class VideoInferenceSummary(BaseModel):
     last_timestamp: float = Field(alias="lastTimestamp")
 
 
+class VideoInferenceCameraModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    source: str
+    horizontal_fov_deg: list[float] = Field(alias="horizontalFovDeg")
+    timestamps: list[float]
+
+    @model_validator(mode="after")
+    def validate_lengths(self) -> "VideoInferenceCameraModel":
+        if len(self.horizontal_fov_deg) != len(self.timestamps):
+            raise ValueError("horizontalFovDeg length must match timestamps length.")
+        return self
+
+
 class VideoInferenceResponse(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     sequence: SkeletonSequenceModel
     summary: VideoInferenceSummary
     saved_npz_path: str | None = Field(default=None, alias="savedNpzPath")
+    camera: VideoInferenceCameraModel | None = None
 
 
 class SequenceSourceModel(BaseModel):

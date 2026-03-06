@@ -49,7 +49,17 @@ class _SinglePersonEstimator:
             ],
             dtype=np.float32,
         )
-        return [{"bbox": np.array([10, 10, 60, 60], dtype=np.float32), "pred_keypoints_3d": keypoints}]
+        return [
+            {
+                "bbox": np.array([10, 10, 60, 60], dtype=np.float32),
+                "pred_keypoints_3d": keypoints,
+                "cam_intrinsics": np.array(
+                    [[100.0, 0.0, 60.0], [0.0, 100.0, 40.0], [0.0, 0.0, 1.0]],
+                    dtype=np.float32,
+                ),
+                "camera_source": "moge2",
+            }
+        ]
 
 
 class _TwoPersonEstimator:
@@ -147,3 +157,24 @@ def test_extract_skeleton_sequence_supports_http_video_path(
 
     assert sequence.num_frames == 3
     assert sequence.num_joints == 4
+
+
+def test_extract_skeleton_sequence_returns_camera_metadata(tmp_path: Path) -> None:
+    video_path = tmp_path / "camera.mp4"
+    _write_dummy_video(video_path, fps=10.0, num_frames=10)
+
+    sequence, camera = extract_skeleton_sequence_from_video(
+        video_path=video_path,
+        estimator=_SinglePersonEstimator(),  # type: ignore[arg-type]
+        config=VideoExtractionConfig(
+            target_fps=5.0,
+            max_frames=3,
+        ),
+        return_camera_metadata=True,
+    )
+
+    assert sequence.num_frames == 3
+    assert camera is not None
+    assert camera["source"] == "moge2"
+    assert len(camera["horizontalFovDeg"]) == 3
+    assert len(camera["timestamps"]) == 3

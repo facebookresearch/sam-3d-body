@@ -52,6 +52,11 @@ class _DummyEstimator:
             {
                 "bbox": np.array([10, 10, 60, 60], dtype=np.float32),
                 "pred_keypoints_3d": keypoints,
+                "cam_intrinsics": np.array(
+                    [[100.0, 0.0, 60.0], [0.0, 100.0, 40.0], [0.0, 0.0, 1.0]],
+                    dtype=np.float32,
+                ),
+                "camera_source": "moge2",
             }
         ]
 
@@ -94,6 +99,9 @@ def test_infer_video_endpoint_returns_sequence_and_summary(tmp_path: Path) -> No
     assert len(payload["sequence"]["timestamps"]) == 3
     assert len(payload["sequence"]["keypoints3d"]) == 3
     assert payload["savedNpzPath"] == str(output_npz)
+    assert payload["camera"]["source"] == "moge2"
+    assert len(payload["camera"]["horizontalFovDeg"]) == 3
+    assert len(payload["camera"]["timestamps"]) == 3
 
     assert output_npz.exists()
 

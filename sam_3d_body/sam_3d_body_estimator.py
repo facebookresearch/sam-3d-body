@@ -168,10 +168,12 @@ class SAM3DBodyEstimator:
 
         # Handle camera intrinsics
         # - either provided externally or generated via default FOV estimator
+        camera_source = "default"
         if cam_int is not None:
             print("Using provided camera intrinsics...")
             cam_int = cam_int.to(batch["img"])
             batch["cam_int"] = cam_int.clone()
+            camera_source = "provided"
         elif self.fov_estimator is not None:
             print("Running FOV estimator ...")
             input_image = batch["img_ori"][0].data
@@ -179,8 +181,17 @@ class SAM3DBodyEstimator:
                 batch["img"]
             )
             batch["cam_int"] = cam_int.clone()
+            camera_source = str(getattr(self.fov_estimator, "name", "fov_estimator"))
         else:
             cam_int = batch["cam_int"].clone()
+
+        cam_intrinsics_np: np.ndarray | None = None
+        if isinstance(cam_int, torch.Tensor):
+            cam_intrinsics_np = cam_int.detach().cpu().numpy()
+        elif isinstance(cam_int, np.ndarray):
+            cam_intrinsics_np = cam_int.copy()
+        if cam_intrinsics_np is not None and cam_intrinsics_np.ndim == 3 and cam_intrinsics_np.shape[0] == 1:
+            cam_intrinsics_np = cam_intrinsics_np[0]
 
         outputs = self.model.run_inference(
             img,
@@ -218,6 +229,12 @@ class SAM3DBodyEstimator:
                     "pred_joint_coords": out["pred_joint_coords"][idx],
                     "pred_global_rots": out["joint_global_rots"][idx],
                     "mhr_model_params": out["mhr_model_params"][idx],
+                    "cam_intrinsics": (
+                        cam_intrinsics_np.copy()
+                        if cam_intrinsics_np is not None
+                        else None
+                    ),
+                    "camera_source": camera_source,
                 }
             )
 
