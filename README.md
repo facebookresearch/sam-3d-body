@@ -125,6 +125,27 @@ cv2.imwrite("output.jpg", rend_img.astype(np.uint8))
 
 For a complete demo with visualization, see [notebook/demo_human.ipynb](notebook/demo_human.ipynb).
 
+## Reference Asset Generation
+
+To preprocess a single reference video into technique assets, run:
+
+```bash
+python scripts/build_reference_assets.py \
+    --video-path ./data/reference_videos/smash.mp4 \
+    --action-type smash \
+    --output-dir ./out/reference-assets/smash \
+    --checkpoint-path ./checkpoints/sam-3d-body-dinov3/model.ckpt \
+    --mhr-path ./checkpoints/sam-3d-body-dinov3/assets/mhr_model.pt
+```
+
+This command writes three files to `--output-dir`:
+
+- `<reference_id>.npz`
+- `<reference_id>.render.npz`
+- `metadata.json`
+
+You can optionally override the generated reference ID with `--reference-id` and pass `--selection-point-px X Y` to lock onto a specific person in multi-person videos.
+
 
 ## Model Description
 

@@ -15,12 +15,8 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from sam_3d_body import SAM3DBodyEstimator, load_sam_3d_body
-from sam_3d_body.reference_assets import (
-    build_reference_assets,
-    discover_reference_videos,
-    load_reference_manifest,
-)
+from sam_3d_body import ReferenceVideoEntry, SAM3DBodyEstimator, load_sam_3d_body
+from sam_3d_body.reference_assets import build_reference_assets
 from sam_3d_body.video_processor import VideoExtractionConfig
 
 
@@ -38,20 +34,26 @@ _DEFAULT_D1_DATABASE_BY_ENV = {
 }
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description=(
-            "Batch preprocess reference videos into core skeleton npz and render npz assets."
-        )
+        description="Preprocess a reference video into core skeleton npz and render npz assets."
     )
-    parser.add_argument("--input-dir", default="", help="Directory containing reference videos.")
-    parser.add_argument("--manifest-json", default="", help="Manifest JSON path for per-video metadata.")
+    parser.add_argument("--video-path", required=True, help="Path to the reference video file.")
     parser.add_argument("--output-dir", required=True, help="Output directory for npz and metadata.")
 
-    parser.add_argument("--action-type", default="", help="Default action type for all videos.")
-    parser.add_argument("--athlete-name", default="", help="Default athlete name.")
-    parser.add_argument("--camera-view", default="", help="Default camera view.")
-    parser.add_argument("--handedness", default="", help="Default handedness.")
+    parser.add_argument("--action-type", required=True, help="Action type for the reference video.")
+    parser.add_argument("--reference-id", default="", help="Optional reference asset ID override.")
+    parser.add_argument("--athlete-name", default="", help="Optional athlete name.")
+    parser.add_argument("--camera-view", default="", help="Optional camera view.")
+    parser.add_argument("--handedness", default="", help="Optional handedness.")
+    parser.add_argument(
+        "--selection-point-px",
+        nargs=2,
+        metavar=("X", "Y"),
+        type=float,
+        default=None,
+        help="Optional pixel coordinate used to select the target person in the video.",
+    )
     parser.add_argument("--skeleton-version", default="sam3db_v1", help="Output skeleton version tag.")
 
     parser.add_argument("--target-fps", type=float, default=12.0)
@@ -159,7 +161,7 @@ def parse_args() -> argparse.Namespace:
         help="is_active value for inserted reference assets.",
     )
 
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def _normalize_optional_str(value: str) -> str | None:
@@ -179,37 +181,27 @@ def _build_default_video_config(args: argparse.Namespace) -> VideoExtractionConf
     )
 
 
-def _load_entries(args: argparse.Namespace):
-    input_dir = args.input_dir.strip()
-    manifest_json = args.manifest_json.strip()
-    if bool(input_dir) == bool(manifest_json):
-        raise ValueError("Provide exactly one of --input-dir or --manifest-json.")
+def _load_entry(args: argparse.Namespace) -> ReferenceVideoEntry:
+    video_path = Path(args.video_path).expanduser()
+    if not video_path.exists():
+        raise FileNotFoundError(f"Reference video not found: {video_path}")
+    if not video_path.is_file():
+        raise ValueError(f"--video-path must point to a file: {video_path}")
 
     default_video_config = _build_default_video_config(args)
-    default_action_type = _normalize_optional_str(args.action_type)
-    default_athlete_name = _normalize_optional_str(args.athlete_name)
-    default_camera_view = _normalize_optional_str(args.camera_view)
-    default_handedness = _normalize_optional_str(args.handedness)
-
-    if manifest_json:
-        return load_reference_manifest(
-            manifest_json,
-            default_action_type=default_action_type,
-            default_athlete_name=default_athlete_name,
-            default_camera_view=default_camera_view,
-            default_handedness=default_handedness,
-            default_video_config=default_video_config,
-        )
-
-    if default_action_type is None:
-        raise ValueError("--action-type is required when using --input-dir.")
-
-    return discover_reference_videos(
-        input_dir,
-        action_type=default_action_type,
-        athlete_name=default_athlete_name,
-        camera_view=default_camera_view,
-        handedness=default_handedness,
+    selection_point_px = (
+        (float(args.selection_point_px[0]), float(args.selection_point_px[1]))
+        if args.selection_point_px is not None
+        else None
+    )
+    return ReferenceVideoEntry(
+        video_path=video_path,
+        action_type=args.action_type,
+        reference_id=_normalize_optional_str(args.reference_id),
+        athlete_name=_normalize_optional_str(args.athlete_name),
+        camera_view=_normalize_optional_str(args.camera_view),
+        handedness=_normalize_optional_str(args.handedness),
+        selection_point_px=selection_point_px,
         video_config=default_video_config,
     )
 
@@ -647,15 +639,13 @@ def _publish_assets(args: argparse.Namespace, metadata: dict[str, Any]) -> dict[
     }
 
 
-def main() -> None:
-    args = parse_args()
-    entries = _load_entries(args)
-    if not entries:
-        raise ValueError("No videos found for preprocessing.")
+def main(argv: list[str] | None = None) -> None:
+    args = parse_args(argv)
+    entry = _load_entry(args)
 
     estimator = _load_estimator(args)
     metadata = build_reference_assets(
-        entries,
+        [entry],
         estimator=estimator,
         output_dir=args.output_dir,
         skeleton_version=args.skeleton_version,

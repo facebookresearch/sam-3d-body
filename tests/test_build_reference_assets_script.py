@@ -3,8 +3,90 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
+
+import cv2
+import numpy as np
+import pytest
 
 from scripts import build_reference_assets as script
+
+
+def _write_dummy_video(path: Path, fps: float = 10.0, num_frames: int = 8) -> None:
+    width, height = 120, 80
+    writer = cv2.VideoWriter(
+        str(path),
+        cv2.VideoWriter_fourcc(*"mp4v"),
+        fps,
+        (width, height),
+    )
+    if not writer.isOpened():
+        raise RuntimeError("Failed to create test video")
+    try:
+        for frame_idx in range(num_frames):
+            color = int((frame_idx * 13) % 255)
+            frame = np.full((height, width, 3), color, dtype=np.uint8)
+            writer.write(frame)
+    finally:
+        writer.release()
+
+
+class _DummyEstimator:
+    def __init__(self) -> None:
+        self.call_count = 0
+        self.faces = np.array([[0, 1, 2], [2, 3, 4]], dtype=np.int32)
+
+    def process_one_image(self, _frame_rgb: np.ndarray, **_kwargs: Any) -> list[dict[str, Any]]:
+        value = float(self.call_count)
+        self.call_count += 1
+        keypoints = np.array(
+            [
+                [value, 0.0, 0.0],
+                [value + 1.0, 0.0, 0.0],
+                [value + 2.0, 0.0, 0.0],
+                [value + 3.0, 0.0, 0.0],
+            ],
+            dtype=np.float32,
+        )
+        keypoints_2d = keypoints[:, :2] * 4.0 + 16.0
+        vertices = np.array(
+            [
+                [value, 0.0, 0.0],
+                [value + 0.2, 0.1, 0.0],
+                [value + 0.4, 0.3, 0.0],
+                [value + 0.6, 0.4, 0.1],
+                [value + 0.8, 0.5, 0.2],
+            ],
+            dtype=np.float32,
+        )
+        return [
+            {
+                "bbox": np.array([8, 8, 80, 72], dtype=np.float32),
+                "pred_keypoints_3d": keypoints,
+                "pred_keypoints_2d": keypoints_2d,
+                "pred_vertices": vertices,
+                "pred_cam_t": np.array([0.1, -0.05, 3.2], dtype=np.float32),
+                "focal_length": np.float32(1200.0),
+                "global_rot": np.array([0.0, 0.1, 0.2], dtype=np.float32),
+                "body_pose_params": np.linspace(0.0, 1.0, 12, dtype=np.float32),
+                "hand_pose_params": np.linspace(0.0, 1.0, 6, dtype=np.float32),
+                "shape_params": np.linspace(-1.0, 1.0, 10, dtype=np.float32),
+                "scale_params": np.array([1.0], dtype=np.float32),
+                "pred_joint_coords": keypoints.copy(),
+                "pred_global_rots": np.tile(np.eye(3, dtype=np.float32), (4, 1, 1)),
+                "mhr_model_params": np.linspace(0.0, 1.0, 16, dtype=np.float32),
+                "cam_intrinsics": np.array(
+                    [
+                        [800.0, 0.0, 60.0],
+                        [0.0, 800.0, 40.0],
+                        [0.0, 0.0, 1.0],
+                    ],
+                    dtype=np.float32,
+                ),
+                "camera_source": "moge2",
+                "mask": np.zeros((80, 120, 1), dtype=np.uint8),
+            }
+        ]
 
 
 def test_to_sql_literal_handles_common_types() -> None:
@@ -24,6 +106,118 @@ def test_parse_wrangler_json_output_with_prefix_lines() -> None:
     parsed = script._parse_wrangler_json_output(raw_output)
     assert isinstance(parsed, list)
     assert parsed[0]["results"][0]["name"] == "id"
+
+
+def test_parse_args_requires_video_path() -> None:
+    with pytest.raises(SystemExit):
+        script.parse_args(["--output-dir", "out", "--action-type", "smash"])
+
+
+def test_parse_args_rejects_legacy_batch_flags() -> None:
+    with pytest.raises(SystemExit):
+        script.parse_args(
+            [
+                "--input-dir",
+                "videos",
+                "--output-dir",
+                "out",
+                "--action-type",
+                "smash",
+            ]
+        )
+
+
+def test_load_entry_defaults_reference_id_from_video_name(tmp_path: Path) -> None:
+    video_path = tmp_path / "Smash Pro 01.mp4"
+    video_path.touch()
+
+    args = script.parse_args(
+        [
+            "--video-path",
+            str(video_path),
+            "--output-dir",
+            str(tmp_path / "out"),
+            "--action-type",
+            "smash",
+        ]
+    )
+    entry = script._load_entry(args)
+
+    assert entry.video_path == video_path
+    assert entry.reference_id == "smash_pro_01"
+    assert entry.selection_point_px is None
+
+
+def test_load_entry_rejects_directory_video_path(tmp_path: Path) -> None:
+    video_dir = tmp_path / "videos"
+    video_dir.mkdir()
+
+    args = script.parse_args(
+        [
+            "--video-path",
+            str(video_dir),
+            "--output-dir",
+            str(tmp_path / "out"),
+            "--action-type",
+            "smash",
+        ]
+    )
+
+    with pytest.raises(ValueError, match="must point to a file"):
+        script._load_entry(args)
+
+
+def test_main_builds_single_video_assets_and_summary(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    video_path = tmp_path / "Smash Pro 01.mp4"
+    _write_dummy_video(video_path)
+    output_dir = tmp_path / "out_assets"
+
+    monkeypatch.setattr(script, "_load_estimator", lambda _args: _DummyEstimator())
+
+    script.main(
+        [
+            "--video-path",
+            str(video_path),
+            "--output-dir",
+            str(output_dir),
+            "--action-type",
+            "smash",
+            "--reference-id",
+            "smash_ref_001",
+            "--athlete-name",
+            "athlete_a",
+            "--camera-view",
+            "side",
+            "--handedness",
+            "right",
+            "--selection-point-px",
+            "12.5",
+            "24.0",
+        ]
+    )
+
+    summary = json.loads(capsys.readouterr().out)
+    assert summary == {
+        "assetCount": 1,
+        "outputDir": str(output_dir),
+    }
+
+    metadata = json.loads((output_dir / "metadata.json").read_text(encoding="utf-8"))
+    assert metadata["assetCount"] == 1
+    assert len(metadata["assets"]) == 1
+    asset = metadata["assets"][0]
+    assert asset["referenceId"] == "smash_ref_001"
+    assert asset["actionType"] == "smash"
+    assert asset["athleteName"] == "athlete_a"
+    assert asset["cameraView"] == "side"
+    assert asset["handedness"] == "right"
+    assert asset["selectionPointPx"] == [12.5, 24.0]
+    assert Path(asset["skeletonPath"]).exists()
+    assert Path(asset["renderAssetPath"]).exists()
 
 
 def test_publish_assets_uploads_and_upserts_with_render_column(
