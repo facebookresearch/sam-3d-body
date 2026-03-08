@@ -18,6 +18,7 @@ from .video_processor import (
     _normalize_cam_intrinsics,
     _resolve_video_file,
     _select_person_output,
+    _validate_selection_bbox_xyxy,
 )
 
 
@@ -33,6 +34,16 @@ class ReferenceExtractionResult:
     frame_indices: np.ndarray
     source_fps: float
     image_size_hw: tuple[int, int]
+
+
+@dataclass(frozen=True)
+class ReferenceAssetBundle:
+    entry: "ReferenceVideoEntry"
+    sequence: SkeletonSequence
+    skeleton_path: Path
+    render_path: Path
+    asset_metadata: dict[str, Any]
+    render_asset: dict[str, Any]
 
 
 def _slugify(value: str) -> str:
@@ -53,6 +64,7 @@ class ReferenceVideoEntry:
     athlete_name: str | None = None
     camera_view: str | None = None
     handedness: str | None = None
+    selection_bbox_xyxy: tuple[float, float, float, float] | None = None
     selection_point_px: tuple[float, float] | None = None
     video_config: VideoExtractionConfig = field(default_factory=VideoExtractionConfig)
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -72,6 +84,17 @@ class ReferenceVideoEntry:
             )
         else:
             object.__setattr__(self, "reference_id", _slugify(self.reference_id))
+
+        if self.selection_bbox_xyxy is not None:
+            bbox = _validate_selection_bbox_xyxy(self.selection_bbox_xyxy)
+            object.__setattr__(
+                self,
+                "selection_bbox_xyxy",
+                tuple(float(value) for value in bbox.tolist()),
+            )
+
+        if self.selection_bbox_xyxy is not None and self.selection_point_px is not None:
+            raise ValueError("selection_bbox_xyxy and selection_point_px are mutually exclusive.")
 
 
 def _parse_video_config(
@@ -191,6 +214,23 @@ def load_reference_manifest(
                 float(selection_point_px_raw[1]),
             )
 
+        selection_bbox_xyxy_raw = raw.get("selectionBbox")
+        selection_bbox_xyxy: tuple[float, float, float, float] | None = None
+        if selection_bbox_xyxy_raw is not None:
+            if (
+                not isinstance(selection_bbox_xyxy_raw, (list, tuple))
+                or len(selection_bbox_xyxy_raw) != 4
+            ):
+                raise ValueError(
+                    f"Manifest item at index {idx} has invalid 'selectionBbox'. Expected [x1, y1, x2, y2]."
+                )
+            selection_bbox_xyxy = (
+                float(selection_bbox_xyxy_raw[0]),
+                float(selection_bbox_xyxy_raw[1]),
+                float(selection_bbox_xyxy_raw[2]),
+                float(selection_bbox_xyxy_raw[3]),
+            )
+
         entries.append(
             ReferenceVideoEntry(
                 video_path=Path(video_path_raw),
@@ -199,6 +239,7 @@ def load_reference_manifest(
                 athlete_name=raw.get("athleteName", default_athlete_name),
                 camera_view=raw.get("cameraView", default_camera_view),
                 handedness=raw.get("handedness", default_handedness),
+                selection_bbox_xyxy=selection_bbox_xyxy,
                 selection_point_px=selection_point_px,
                 video_config=_parse_video_config(
                     raw.get("videoConfig"),
@@ -235,6 +276,11 @@ def _extract_reference_result(
     entry: ReferenceVideoEntry,
     estimator: SAM3DBodyEstimator,
 ) -> ReferenceExtractionResult:
+    selection_bbox = (
+        _validate_selection_bbox_xyxy(entry.selection_bbox_xyxy)
+        if entry.selection_bbox_xyxy is not None
+        else None
+    )
     with _resolve_video_file(entry.video_path) as video_file:
         cap = cv2.VideoCapture(str(video_file))
         if not cap.isOpened():
@@ -289,7 +335,7 @@ def _extract_reference_result(
                 selected = _select_person_output(
                     outputs,
                     previous_bbox,
-                    None,
+                    selection_bbox,
                     entry.selection_point_px,
                 )
                 if selected is None:
@@ -473,6 +519,14 @@ def save_render_asset_npz(
         "floatDtype": float_dtype,
         "fields": sorted(payload.keys()),
         "cameraSource": camera_source,
+        "horizontalFovDeg": (
+            horizontal_fov_deg.astype(np.float32).tolist() if horizontal_fov_deg is not None else None
+        ),
+        "timestamps": (
+            extraction.sequence.timestamps.astype(np.float32).tolist()
+            if horizontal_fov_deg is not None
+            else None
+        ),
         "horizontalFovDegCount": (
             int(horizontal_fov_deg.shape[0]) if horizontal_fov_deg is not None else 0
         ),
@@ -528,6 +582,16 @@ def _build_asset_metadata(
             if entry.selection_point_px is not None
             else None
         ),
+        "selectionBbox": (
+            [
+                entry.selection_bbox_xyxy[0],
+                entry.selection_bbox_xyxy[1],
+                entry.selection_bbox_xyxy[2],
+                entry.selection_bbox_xyxy[3],
+            ]
+            if entry.selection_bbox_xyxy is not None
+            else None
+        ),
         "videoConfig": {
             "targetFps": entry.video_config.target_fps,
             "startTimeSec": entry.video_config.start_time_sec,
@@ -546,6 +610,96 @@ def _build_asset_metadata(
         "jointNames": list(sequence.joint_names) if sequence.joint_names is not None else None,
         "metadata": entry.metadata,
     }
+
+
+def build_reference_assets_metadata(
+    asset_entries: list[dict[str, Any]],
+    *,
+    skeleton_version: str = "sam3db_v1",
+    fov_estimator_name: str | None = None,
+    fov_estimator_path: str | None = None,
+    render_asset_float_dtype: str = "float16",
+    render_include_masks: bool = False,
+) -> dict[str, Any]:
+    return {
+        "schemaVersion": "technique_reference_assets.v2",
+        "generatedAt": datetime.now(timezone.utc).isoformat(),
+        "skeletonVersion": skeleton_version,
+        "fovEstimator": {
+            "name": fov_estimator_name,
+            "path": fov_estimator_path,
+        }
+        if fov_estimator_name is not None
+        else None,
+        "jointUnit": "model_space",
+        "renderAssetEnabled": True,
+        "renderAssetSchemaVersion": RENDER_ASSET_SCHEMA_VERSION,
+        "renderAssetFloatDtype": render_asset_float_dtype,
+        "renderAssetIncludeMasks": render_include_masks,
+        "assetCount": len(asset_entries),
+        "assets": asset_entries,
+    }
+
+
+def save_reference_assets_metadata(
+    metadata: dict[str, Any],
+    output_path: str | Path,
+) -> None:
+    path = Path(output_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as f:
+        json.dump(metadata, f, ensure_ascii=False, indent=2)
+
+
+def build_reference_asset_bundle(
+    entry: ReferenceVideoEntry,
+    *,
+    estimator: SAM3DBodyEstimator,
+    output_dir: str | Path,
+    render_asset_float_dtype: str = "float16",
+    render_include_masks: bool = False,
+    overwrite: bool = False,
+) -> ReferenceAssetBundle:
+    output_root = Path(output_dir)
+    output_root.mkdir(parents=True, exist_ok=True)
+
+    if not entry.video_path.exists():
+        raise FileNotFoundError(f"Reference video not found: {entry.video_path}")
+
+    output_npz = output_root / f"{entry.reference_id}.npz"
+    if output_npz.exists() and not overwrite:
+        raise FileExistsError(
+            f"Reference output already exists: {output_npz}. Set overwrite=True to replace."
+        )
+
+    render_output_npz = output_root / f"{entry.reference_id}.render.npz"
+    if render_output_npz.exists() and not overwrite:
+        raise FileExistsError(
+            f"Reference render output already exists: {render_output_npz}. Set overwrite=True to replace."
+        )
+
+    extraction = _extract_reference_result(
+        entry=entry,
+        estimator=estimator,
+    )
+    sequence = extraction.sequence
+    save_skeleton_sequence_npz(sequence, output_npz)
+    render_asset = save_render_asset_npz(
+        extraction=extraction,
+        estimator=estimator,
+        output_path=render_output_npz,
+        float_dtype=render_asset_float_dtype,
+        include_masks=render_include_masks,
+    )
+    asset_metadata = _build_asset_metadata(entry, sequence, output_npz, extraction, render_asset)
+    return ReferenceAssetBundle(
+        entry=entry,
+        sequence=sequence,
+        skeleton_path=output_npz,
+        render_path=render_output_npz,
+        asset_metadata=asset_metadata,
+        render_asset=render_asset,
+    )
 
 
 def build_reference_assets(
@@ -574,54 +728,24 @@ def build_reference_assets(
             f"Metadata file already exists: {metadata_path}. Set overwrite=True to replace."
         )
 
-    assets: list[dict[str, Any]] = []
-    for entry in entries:
-        if not entry.video_path.exists():
-            raise FileNotFoundError(f"Reference video not found: {entry.video_path}")
-        output_npz = output_root / f"{entry.reference_id}.npz"
-        if output_npz.exists() and not overwrite:
-            raise FileExistsError(
-                f"Reference output already exists: {output_npz}. Set overwrite=True to replace."
-            )
-
-        extraction = _extract_reference_result(
-            entry=entry,
+    bundles = [
+        build_reference_asset_bundle(
+            entry,
             estimator=estimator,
+            output_dir=output_root,
+            render_asset_float_dtype=render_asset_float_dtype,
+            render_include_masks=render_include_masks,
+            overwrite=overwrite,
         )
-        sequence = extraction.sequence
-        save_skeleton_sequence_npz(sequence, output_npz)
-        render_output_npz = output_root / f"{entry.reference_id}.render.npz"
-        if render_output_npz.exists() and not overwrite:
-            raise FileExistsError(
-                f"Reference render output already exists: {render_output_npz}. Set overwrite=True to replace."
-            )
-        render_asset = save_render_asset_npz(
-            extraction=extraction,
-            estimator=estimator,
-            output_path=render_output_npz,
-            float_dtype=render_asset_float_dtype,
-            include_masks=render_include_masks,
-        )
-        assets.append(_build_asset_metadata(entry, sequence, output_npz, extraction, render_asset))
-
-    metadata = {
-        "schemaVersion": "technique_reference_assets.v2",
-        "generatedAt": datetime.now(timezone.utc).isoformat(),
-        "skeletonVersion": skeleton_version,
-        "fovEstimator": {
-            "name": fov_estimator_name,
-            "path": fov_estimator_path,
-        }
-        if fov_estimator_name is not None
-        else None,
-        "jointUnit": "model_space",
-        "renderAssetEnabled": True,
-        "renderAssetSchemaVersion": RENDER_ASSET_SCHEMA_VERSION,
-        "renderAssetFloatDtype": render_asset_float_dtype,
-        "renderAssetIncludeMasks": render_include_masks,
-        "assetCount": len(assets),
-        "assets": assets,
-    }
-    with metadata_path.open("w", encoding="utf-8") as f:
-        json.dump(metadata, f, ensure_ascii=False, indent=2)
+        for entry in entries
+    ]
+    metadata = build_reference_assets_metadata(
+        [bundle.asset_metadata for bundle in bundles],
+        skeleton_version=skeleton_version,
+        fov_estimator_name=fov_estimator_name,
+        fov_estimator_path=fov_estimator_path,
+        render_asset_float_dtype=render_asset_float_dtype,
+        render_include_masks=render_include_masks,
+    )
+    save_reference_assets_metadata(metadata, metadata_path)
     return metadata

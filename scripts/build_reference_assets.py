@@ -56,7 +56,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--skeleton-version", default="sam3db_v1", help="Output skeleton version tag.")
 
-    parser.add_argument("--target-fps", type=float, default=12.0)
+    parser.add_argument("--target-fps", type=float, default=30.0)
     parser.add_argument("--start-time-sec", type=float, default=0.0)
     parser.add_argument("--end-time-sec", type=float, default=None)
     parser.add_argument("--max-frames", type=int, default=240)

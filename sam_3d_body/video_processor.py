@@ -20,7 +20,7 @@ _REMOTE_VIDEO_SCHEMES = {"http", "https"}
 
 @dataclass
 class VideoExtractionConfig:
-    target_fps: float = 12.0
+    target_fps: float = 30.0
     start_time_sec: float = 0.0
     end_time_sec: float | None = None
     max_frames: int = 240

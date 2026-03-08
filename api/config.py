@@ -19,6 +19,7 @@ class ApiSettings:
     device: str
     fov_name: str
     fov_path: str
+    artifact_root: str
     eager_model_load: bool = False
 
 
@@ -39,5 +40,9 @@ def load_api_settings() -> ApiSettings:
         device=os.getenv("SAM3DBODY_DEVICE", "cuda"),
         fov_name=os.getenv("SAM3DBODY_FOV_NAME", "moge2"),
         fov_path=os.getenv("SAM3DBODY_FOV_PATH", ""),
+        artifact_root=os.getenv(
+            "SAM3DBODY_ARTIFACT_ROOT",
+            str(Path(__file__).resolve().parents[1] / "tmp_api_assets"),
+        ),
         eager_model_load=_read_bool_env("SAM3DBODY_EAGER_MODEL_LOAD", False),
     )

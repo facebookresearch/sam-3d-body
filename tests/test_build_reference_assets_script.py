@@ -127,6 +127,21 @@ def test_parse_args_rejects_legacy_batch_flags() -> None:
         )
 
 
+def test_parse_args_defaults_target_fps_to_30() -> None:
+    args = script.parse_args(
+        [
+            "--video-path",
+            "/tmp/video.mp4",
+            "--output-dir",
+            "out",
+            "--action-type",
+            "smash",
+        ]
+    )
+
+    assert args.target_fps == 30.0
+
+
 def test_load_entry_defaults_reference_id_from_video_name(tmp_path: Path) -> None:
     video_path = tmp_path / "Smash Pro 01.mp4"
     video_path.touch()

@@ -6,10 +6,12 @@ from typing import Any
 import cv2
 import numpy as np
 import pytest
+from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
+from api.config import ApiSettings
 from api.main import create_app
-from api.models import AlignmentInferenceRequest, VideoInferenceRequest
+from api.models import VideoInferenceRequest
 
 
 def _write_dummy_video(path: Path, fps: float, num_frames: int) -> None:
@@ -78,97 +80,83 @@ def test_health_endpoint_returns_service_status() -> None:
     assert payload["modelLoadError"] is None
 
 
-def test_infer_video_endpoint_returns_sequence_and_summary(tmp_path: Path) -> None:
+def test_infer_video_endpoint_returns_asset_manifest_and_local_files(tmp_path: Path) -> None:
     video_path = tmp_path / "user.mp4"
-    output_npz = tmp_path / "user_sequence.npz"
     _write_dummy_video(video_path, fps=10.0, num_frames=10)
+    artifact_root = tmp_path / "artifacts"
 
-    app = create_app(estimator=_DummyEstimator())
+    app = create_app(
+        estimator=_DummyEstimator(),
+        settings=ApiSettings(
+            checkpoint_path="/tmp/model.ckpt",
+            mhr_path="/tmp/mhr_model.pt",
+            device="cpu",
+            fov_name="moge2",
+            fov_path="",
+            artifact_root=str(artifact_root),
+        ),
+    )
     infer_video_endpoint = _route_endpoint(app, "/infer/video")
     request = VideoInferenceRequest.model_validate(
         {
             "videoPath": str(video_path),
+            "selection": {"bbox": [10, 20, 60, 70]},
             "videoConfig": {"targetFps": 5.0, "maxFrames": 3},
-            "saveNpzPath": str(output_npz),
+            "assetConfig": {
+                "assetId": "user_bundle",
+                "actionType": "smash",
+                "handedness": "right",
+            },
+            "storage": {
+                "mode": "local",
+                "prefix": "unit-tests",
+            },
         }
     )
 
     payload = infer_video_endpoint(request)
+    assert payload["assetId"] == "user_bundle"
     assert payload["summary"]["numFrames"] == 3
     assert payload["summary"]["numJoints"] == 4
-    assert len(payload["sequence"]["timestamps"]) == 3
-    assert len(payload["sequence"]["keypoints3d"]) == 3
-    assert payload["savedNpzPath"] == str(output_npz)
+    assert payload["summary"]["sourceFps"] == pytest.approx(10.0)
+    assert payload["summary"]["frameIndices"] == [0, 2, 4]
     assert payload["camera"]["source"] == "moge2"
     assert len(payload["camera"]["horizontalFovDeg"]) == 3
     assert len(payload["camera"]["timestamps"]) == 3
+    assert payload["manifest"]["assetCount"] == 1
+    assert payload["manifest"]["assets"][0]["selectionBbox"] == [10.0, 20.0, 60.0, 70.0]
 
-    assert output_npz.exists()
+    skeleton_path = Path(payload["files"]["skeleton"]["path"])
+    render_path = Path(payload["files"]["render"]["path"])
+    metadata_path = Path(payload["files"]["metadata"]["path"])
+    assert skeleton_path.exists()
+    assert render_path.exists()
+    assert metadata_path.exists()
+    assert payload["files"]["skeleton"]["fetchUrl"] is not None
+    assert payload["files"]["render"]["fetchUrl"] is not None
+    assert payload["files"]["metadata"]["fetchUrl"] is not None
 
-
-def test_infer_alignment_endpoint_supports_mixed_sources(tmp_path: Path) -> None:
-    video_path = tmp_path / "user.mp4"
-    reference_npz = tmp_path / "reference.npz"
-    _write_dummy_video(video_path, fps=10.0, num_frames=10)
-
-    reference_keypoints = np.array(
-        [
-            [
-                [0.0, 0.0, 0.0],
-                [1.0, 0.0, 0.0],
-                [2.0, 0.0, 0.0],
-                [3.0, 0.0, 0.0],
-            ],
-            [
-                [1.0, 0.0, 0.0],
-                [2.0, 0.0, 0.0],
-                [3.0, 0.0, 0.0],
-                [4.0, 0.0, 0.0],
-            ],
-            [
-                [2.0, 0.0, 0.0],
-                [3.0, 0.0, 0.0],
-                [4.0, 0.0, 0.0],
-                [5.0, 0.0, 0.0],
-            ],
-        ],
-        dtype=np.float32,
-    )
-    np.savez(
-        reference_npz,
-        keypoints_3d=reference_keypoints,
-        timestamps=np.array([0.0, 0.2, 0.4], dtype=np.float32),
-        joint_names=np.array(["joint_0", "joint_1", "joint_2", "joint_3"], dtype=object),
-    )
-
-    app = create_app(estimator=_DummyEstimator())
-    infer_alignment_endpoint = _route_endpoint(app, "/infer/alignment")
-    request = AlignmentInferenceRequest.model_validate(
-        {
-            "user": {
-                "videoPath": str(video_path),
-                "videoConfig": {"targetFps": 5.0, "maxFrames": 3},
-            },
-            "reference": {"npzPath": str(reference_npz)},
-            "alignmentConfig": {"useFastdtw": False},
-        }
-    )
-
-    payload = infer_alignment_endpoint(request)
-    assert payload["algorithm"] == "exact_dtw"
-    assert payload["summary"]["numUserFrames"] == 3
-    assert payload["summary"]["numReferenceFrames"] == 3
-    assert payload["summary"]["numAlignedPairs"] >= 3
+    client = TestClient(app)
+    render_response = client.get(payload["files"]["render"]["fetchUrl"])
+    assert render_response.status_code == 200
+    assert len(render_response.content) > 0
 
 
 def test_video_inference_request_uses_selection_bbox() -> None:
     payload = VideoInferenceRequest.model_validate(
         {
             "videoPath": "/tmp/video.mp4",
-            "selectionBbox": [10, 20, 30, 40],
+            "selection": {"bbox": [10, 20, 30, 40]},
         }
     )
-    assert payload.selection_bbox_xyxy == (10.0, 20.0, 30.0, 40.0)
+    assert payload.selection is not None
+    assert payload.selection.bbox_xyxy == (10.0, 20.0, 30.0, 40.0)
+
+
+def test_video_inference_request_defaults_target_fps_to_30() -> None:
+    payload = VideoInferenceRequest.model_validate({"videoPath": "/tmp/video.mp4"})
+
+    assert payload.video_config.target_fps == 30.0
 
 
 def test_video_inference_request_rejects_legacy_fields() -> None:
@@ -184,6 +172,14 @@ def test_video_inference_request_rejects_legacy_fields() -> None:
         VideoInferenceRequest.model_validate(
             {
                 "videoPath": "/tmp/video.mp4",
-                "selectionPointPx": [10, 20],
+                "selectionBbox": [10, 20, 30, 40],
+            }
+        )
+
+    with pytest.raises(ValidationError):
+        VideoInferenceRequest.model_validate(
+            {
+                "videoPath": "/tmp/video.mp4",
+                "saveNpzPath": "/tmp/out.npz",
             }
         )
