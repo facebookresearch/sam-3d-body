@@ -159,6 +159,42 @@ def test_load_reference_manifest_applies_defaults(tmp_path: Path) -> None:
     assert entry.metadata["source"] == "youtube"
 
 
+def test_reference_video_entry_preserves_remote_video_url() -> None:
+    entry = ReferenceVideoEntry(
+        video_path="https://example.com/library/smash_remote_ref.mp4",
+        action_type="smash",
+    )
+
+    assert entry.video_path == "https://example.com/library/smash_remote_ref.mp4"
+    assert entry.reference_id == "smash_remote_ref"
+
+
+def test_load_reference_manifest_preserves_remote_video_url(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "assets": [
+                    {
+                        "videoPath": "https://example.com/library/smash_remote_ref.mp4",
+                        "referenceId": "remote_ref",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    entries = load_reference_manifest(
+        manifest_path,
+        default_action_type="smash",
+    )
+
+    assert len(entries) == 1
+    assert entries[0].video_path == "https://example.com/library/smash_remote_ref.mp4"
+    assert entries[0].reference_id == "remote_ref"
+
+
 def test_build_reference_assets_writes_npz_and_metadata(tmp_path: Path) -> None:
     video1 = tmp_path / "smash_1.mp4"
     video2 = tmp_path / "smash_2.mp4"

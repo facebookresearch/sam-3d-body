@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
+from urllib.parse import urlparse
 
 import cv2
 import numpy as np
@@ -15,6 +16,7 @@ from .technique_alignment import SkeletonSequence, normalize_skeleton_sequence
 from .video_processor import (
     VideoExtractionConfig,
     _horizontal_fov_deg_from_intrinsics,
+    _is_remote_video_path,
     _normalize_cam_intrinsics,
     _resolve_video_file,
     _select_person_output,
@@ -52,13 +54,23 @@ def _slugify(value: str) -> str:
     return normalized or "reference"
 
 
-def _derive_reference_id(video_path: Path) -> str:
-    return _slugify(video_path.stem)
+def _normalize_video_path(video_path: str | Path) -> str | Path:
+    raw_path = str(video_path).strip()
+    if _is_remote_video_path(raw_path):
+        return raw_path
+    return Path(raw_path)
+
+
+def _derive_reference_id(video_path: str | Path) -> str:
+    raw_path = str(video_path).strip()
+    if _is_remote_video_path(raw_path):
+        return _slugify(Path(urlparse(raw_path).path).stem)
+    return _slugify(Path(raw_path).stem)
 
 
 @dataclass(frozen=True)
 class ReferenceVideoEntry:
-    video_path: Path
+    video_path: str | Path
     action_type: str
     reference_id: str | None = None
     athlete_name: str | None = None
@@ -70,7 +82,7 @@ class ReferenceVideoEntry:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "video_path", Path(self.video_path))
+        object.__setattr__(self, "video_path", _normalize_video_path(self.video_path))
         cleaned_action_type = self.action_type.strip()
         if not cleaned_action_type:
             raise ValueError("action_type must not be empty.")
@@ -233,7 +245,7 @@ def load_reference_manifest(
 
         entries.append(
             ReferenceVideoEntry(
-                video_path=Path(video_path_raw),
+                video_path=video_path_raw,
                 action_type=action_type,
                 reference_id=raw.get("referenceId"),
                 athlete_name=raw.get("athleteName", default_athlete_name),
@@ -663,7 +675,7 @@ def build_reference_asset_bundle(
     output_root = Path(output_dir)
     output_root.mkdir(parents=True, exist_ok=True)
 
-    if not entry.video_path.exists():
+    if not _is_remote_video_path(str(entry.video_path)) and not Path(entry.video_path).exists():
         raise FileNotFoundError(f"Reference video not found: {entry.video_path}")
 
     output_npz = output_root / f"{entry.reference_id}.npz"
