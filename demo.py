@@ -89,6 +89,7 @@ def main(args):
             image_path,
             bbox_thr=args.bbox_thresh,
             use_mask=args.use_mask,
+            inference_type=args.inference_type,
         )
 
         img = cv2.imread(image_path)
@@ -185,6 +186,13 @@ if __name__ == "__main__":
         action="store_true",
         default=False,
         help="Use mask-conditioned prediction (segmentation mask is automatically generated from bbox)",
+    )
+    parser.add_argument(
+        "--inference_type",
+        type=str,
+        default="full",
+        choices=["full", "hand"],
+        help="Type of inference to run: 'full' (default) or 'hand' for hand-only inference",
     )
     args = parser.parse_args()
 
