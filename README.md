@@ -103,6 +103,18 @@ python demo.py \
     --detector_name sam3
 ```
 
+You can run inference focusing only on hands by setting the `--inference_type` argument:
+
+```bash
+python demo.py \
+    --image_folder <path_to_images> \
+    --output_folder <path_to_output> \
+    --checkpoint_path ./checkpoints/sam-3d-body-dinov3/model.ckpt \
+    --mhr_path ./checkpoints/sam-3d-body-dinov3/assets/mhr_model.pt \
+    --inference_type hand
+```
+For best performance in hand-only inference, we recommend using tightly cropped hand images with minimal or no visible body context.
+
 You can also try the following lines of code with models loaded directly from [Hugging Face](https://huggingface.co/facebook)
 
 ```python
