@@ -5,6 +5,7 @@ SAM 3D Body is one part of SAM 3D, a pair of models for object and human mesh re
 # SAM 3D Body: Robust Full-Body Human Mesh Recovery
 
 <p align="left">
+<a href="https://arxiv.org/abs/2602.15989"><img src="https://img.shields.io/badge/arXiv-2602.15989-b31b1b.svg" alt="arXiv"></a>
 <a href="https://ai.meta.com/research/publications/sam-3d-body-robust-full-body-human-mesh-recovery/"><img src='https://img.shields.io/badge/Meta_AI-Paper-4A90E2?logo=meta&logoColor=white' alt='Paper'></a>
 <a href="https://ai.meta.com/blog/sam-3d/"><img src='https://img.shields.io/badge/Project_Page-Blog-9B72F0?logo=googledocs&logoColor=white' alt='Blog'></a>
 <a href="https://huggingface.co/datasets/facebook/sam-3d-body-dataset"><img src='https://img.shields.io/badge/🤗_Hugging_Face-Dataset-F59500?logoColor=white' alt='Dataset'></a>
@@ -78,7 +79,7 @@ See [INSTALL.md](INSTALL.md) for instructions for python environment setup and m
 
 ## Getting Started
 
-3DB can reconstruct 3D full-body human mesh from a single image, optionally with keypoint/mask prompts and/or hand refinement from the hand decoder. 
+3DB can reconstruct 3D full-body human mesh from a single image, optionally with keypoint/mask prompts and/or hand refinement from the hand decoder.
 
 For a quick start, run our demo script for model inference and visualization with models from [Hugging Face](https://huggingface.co/facebook) (please make sure to follow [INSTALL.md](INSTALL.md) to request access to our checkpoints.).
 
@@ -131,7 +132,7 @@ For a complete demo with visualization, see [notebook/demo_human.ipynb](notebook
 
 The table below shows the performance of SAM 3D Body checkpoints released on 11/19/2025.
 
-|      **Backbone (size)**       | **3DPW (MPJPE)** |    **EMDB (MPJPE)**     | **RICH (PVE)** | **COCO (PCK@.05)** |  **LSPET (PCK@.05)** | **Freihand (PA-MPJPE)** 
+|      **Backbone (size)**       | **3DPW (MPJPE)** |    **EMDB (MPJPE)**     | **RICH (PVE)** | **COCO (PCK@.05)** |  **LSPET (PCK@.05)** | **Freihand (PA-MPJPE)**
 | :------------------: | :----------: | :--------------------: | :-----------------: | :----------------: | :----------------: | :----------------: |
 |  DINOv3-H+ (840M) <br /> ([config](https://huggingface.co/facebook/sam-3d-body-dinov3/blob/main/model_config.yaml), [checkpoint](https://huggingface.co/facebook/sam-3d-body-dinov3/blob/main/model.ckpt))   |      54.8      |          61.7         |       60.3        |       86.5        | 68.0 | 5.5
 |   ViT-H  (631M) <br /> ([config](https://huggingface.co/facebook/sam-3d-body-vith/blob/main/model_config.yaml), [checkpoint](https://huggingface.co/facebook/sam-3d-body-vith/blob/main/model.ckpt))    |     54.8   |         62.9         |       61.7        |        86.8       | 68.9 |  5.5
@@ -164,10 +165,10 @@ Vivian Lee, George Orlin, Nikhila Ravi, Andrew Westbury, Jyun-Ting Song, Zejia W
 If you use SAM 3D Body or the SAM 3D Body dataset in your research, please use the following BibTeX entry.
 
 ```bibtex
-@article{yang2025sam3dbody,
+@article{yang2026sam3dbody,
   title={SAM 3D Body: Robust Full-Body Human Mesh Recovery},
   author={Yang, Xitong and Kukreja, Devansh and Pinkus, Don and Sagar, Anushka and Fan, Taosha and Park, Jinhyung and Shin, Soyong and Cao, Jinkun and Liu, Jiawei and Ugrinovic, Nicolas and Feiszli, Matt and Malik, Jitendra and Dollar, Piotr and Kitani, Kris},
-  journal={arXiv preprint; identifier to be added},
-  year={2025}
+  journal={arXiv preprint arXiv:2602.15989},
+  year={2026}
 }
 ```
