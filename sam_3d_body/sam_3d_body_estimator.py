@@ -188,7 +188,11 @@ class SAM3DBodyEstimator:
         else:
             pose_output = outputs
 
-        out = pose_output["mhr"]
+        if inference_type == "hand":
+            out = pose_output["mhr_hand"]
+        else:
+            out = pose_output["mhr"]
+
         out = recursive_to(out, "cpu")
         out = recursive_to(out, "numpy")
         all_out = []
