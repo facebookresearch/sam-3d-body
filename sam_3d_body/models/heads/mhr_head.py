@@ -105,15 +105,17 @@ class MHRHead(nn.Module):
         )
 
         # Load MHR itself
+        # Force CPU: MHR TorchScript model uses float64 + placeholder storage
+        # that crashes on MPS backend. CPU loading works on all platforms.
         if MOMENTUM_ENABLED:
             self.mhr = MHR.from_files(
-                device=torch.device("cuda" if torch.cuda.is_available() else "cpu"),
+                device=torch.device("cpu"),
                 lod=1,
             )
         else:
             self.mhr = torch.jit.load(
                 mhr_model_path,
-                map_location=("cuda" if torch.cuda.is_available() else "cpu"),
+                map_location="cpu",
             )
 
         for param in self.mhr.parameters():
@@ -224,9 +226,14 @@ class MHRHead(nn.Module):
             # Zero out non-hand parameters
             model_params[:, self.nonhand_param_idxs] = 0
 
+        # MHR TorchScript uses float64 internally which MPS doesn't support.
+        # Move inputs to CPU for MHR forward, then move results back.
+        orig_device = shape_params.device
         curr_skinned_verts, curr_skel_state = self.mhr(
-            shape_params, model_params, expr_params
+            shape_params.cpu(), model_params.cpu(), expr_params.cpu()
         )
+        curr_skinned_verts = curr_skinned_verts.to(orig_device)
+        curr_skel_state = curr_skel_state.to(orig_device)
         curr_joint_coords, curr_joint_quats, _ = torch.split(
             curr_skel_state, [3, 4, 1], dim=2
         )
