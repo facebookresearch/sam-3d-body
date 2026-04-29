@@ -9,21 +9,27 @@ from PIL import Image
 
 
 class HumanDetector:
-    def __init__(self, name="vitdet", device="cuda", **kwargs):
-        self.device = device
+    def __init__(self, name="vitdet", device="cuda", offload_mode="none", **kwargs):
+        self.device = torch.device(device)
+        self.offload_mode = offload_mode
 
         if name == "vitdet":
-            print("########### Using human detector: ViTDet...")
+            print(f"########### Using human detector: ViTDet... (offload_mode={offload_mode!r})")
+            # DetectionCheckpointer always loads to CPU internally;
+            # load_detectron2_vitdet moves to CPU explicitly after.
             self.detector = load_detectron2_vitdet(**kwargs)
             self.detector_func = run_detectron2_vitdet
 
-            self.detector = self.detector.to(self.device)
+            if offload_mode == "none":
+                # Original behaviour: keep on target device persistently
+                self.detector = self.detector.to(self.device)
+            # offload_mode="cpu": stays on CPU, moved per-call in run_human_detection
             self.detector.eval()
         elif name == "sam3":
             from sam3.model_builder import build_sam3_image_model
             from sam3.model.sam3_image_processor import Sam3Processor
-            
-            self.detector = build_sam3_image_model()
+
+            self.detector = build_sam3_image_model(device=str(self.device))
             self.processor = Sam3Processor(self.detector)
             self.detector_func = lambda detector, img, **kwargs: self.sam3_run(
                 img, **kwargs
@@ -62,7 +68,17 @@ class HumanDetector:
         return np.array(enlarged_boxes)
 
     def run_human_detection(self, img, **kwargs):
-        return self.detector_func(self.detector, img, **kwargs)
+        if self.offload_mode == "cpu" and self.device.type != "cpu":
+            self.detector.to(self.device)
+            try:
+                result = self.detector_func(self.detector, img, **kwargs)
+            finally:
+                self.detector.cpu()
+                if self.device.type == "cuda":
+                    torch.cuda.empty_cache()
+            return result
+        else:
+            return self.detector_func(self.detector, img, **kwargs)
 
 
 def load_detectron2_vitdet(path=""):
@@ -92,7 +108,9 @@ def load_detectron2_vitdet(path=""):
     detector = instantiate(detectron2_cfg.model)
     checkpointer = DetectionCheckpointer(detector)
     checkpointer.load(detectron2_cfg.train.init_checkpoint)
-
+    # DetectionCheckpointer loads to whichever device the model skeleton is on.
+    # Explicitly move to CPU so the caller controls final placement.
+    detector = detector.cpu()
     detector.eval()
     return detector
 
@@ -112,9 +130,11 @@ def run_detectron2_vitdet(
     IMAGE_SIZE = 1024
     transforms = T.ResizeShortestEdge(short_edge_length=IMAGE_SIZE, max_size=IMAGE_SIZE)
     img_transformed = transforms(T.AugInput(img)).apply_image(img)
+    # Follow the detector's actual device so this works with CPU offloading
+    _device = next(detector.parameters()).device
     img_transformed = torch.as_tensor(
         img_transformed.astype("float32").transpose(2, 0, 1)
-    )
+    ).to(_device)
     inputs = {"image": img_transformed, "height": height, "width": width}
 
     with torch.no_grad():

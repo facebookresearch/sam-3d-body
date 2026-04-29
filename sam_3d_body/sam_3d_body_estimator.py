@@ -28,7 +28,13 @@ class SAM3DBodyEstimator:
         human_segmentor=None,
         fov_estimator=None,
     ):
-        self.device = sam_3d_body_model.device
+        # CPUOffloadWrapper keeps weights on CPU between calls; the inference
+        # device is stored on the wrapper. Fall back to reading a parameter
+        # so this works with plain nn.Module too.
+        if hasattr(sam_3d_body_model, "inference_device"):
+            self.device = sam_3d_body_model.inference_device  # CPUOffloadWrapper
+        else:
+            self.device = next(sam_3d_body_model.parameters()).device
         self.model, self.cfg = sam_3d_body_model, model_cfg
         self.detector = human_detector
         self.sam = human_segmentor
@@ -94,7 +100,8 @@ class SAM3DBodyEstimator:
         self.image_embeddings = None
         self.output = None
         self.prev_prompt = []
-        torch.cuda.empty_cache()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
         if type(img) == str:
             img = load_image(img, backend="cv2", image_format="bgr")
@@ -157,32 +164,52 @@ class SAM3DBodyEstimator:
         batch = prepare_batch(img, self.transform, boxes, masks, masks_score)
 
         #################### Run model inference on an image ####################
-        batch = recursive_to(batch, "cuda")
-        self.model._initialize_batch(batch)
+        batch = recursive_to(batch, self.device)
 
-        # Handle camera intrinsics
-        # - either provided externally or generated via default FOV estimator
-        if cam_int is not None:
-            print("Using provided camera intrinsics...")
-            cam_int = cam_int.to(batch["img"])
-            batch["cam_int"] = cam_int.clone()
-        elif self.fov_estimator is not None:
-            print("Running FOV estimator ...")
-            input_image = batch["img_ori"][0].data
-            cam_int = self.fov_estimator.get_cam_intrinsics(input_image).to(
-                batch["img"]
+        # If the model is wrapped in CPUOffloadWrapper, run_inference() is
+        # called directly on the inner model via __getattr__, bypassing
+        # forward() and therefore bypassing the device-move logic entirely.
+        # We detect this and manage the device transfer manually here.
+        from sam_3d_body.build_models import CPUOffloadWrapper
+        _is_offloaded = isinstance(self.model, CPUOffloadWrapper)
+        _inner = self.model.inner if _is_offloaded else self.model
+
+        if _is_offloaded:
+            _inner.to(self.device)
+            CPUOffloadWrapper._move_non_persistent_buffers(_inner, self.device)
+
+        try:
+            _inner._initialize_batch(batch)
+
+            # Handle camera intrinsics
+            # - either provided externally or generated via default FOV estimator
+            if cam_int is not None:
+                print("Using provided camera intrinsics...")
+                cam_int = cam_int.to(batch["img"])
+                batch["cam_int"] = cam_int.clone()
+            elif self.fov_estimator is not None:
+                print("Running FOV estimator ...")
+                input_image = batch["img_ori"][0].data
+                cam_int = self.fov_estimator.get_cam_intrinsics(input_image).to(
+                    batch["img"]
+                )
+                batch["cam_int"] = cam_int.clone()
+            else:
+                cam_int = batch["cam_int"].clone()
+
+            outputs = _inner.run_inference(
+                img,
+                batch,
+                inference_type=inference_type,
+                transform_hand=self.transform_hand,
+                thresh_wrist_angle=self.thresh_wrist_angle,
             )
-            batch["cam_int"] = cam_int.clone()
-        else:
-            cam_int = batch["cam_int"].clone()
-
-        outputs = self.model.run_inference(
-            img,
-            batch,
-            inference_type=inference_type,
-            transform_hand=self.transform_hand,
-            thresh_wrist_angle=self.thresh_wrist_angle,
-        )
+        finally:
+            if _is_offloaded:
+                _inner.cpu()
+                CPUOffloadWrapper._move_non_persistent_buffers(_inner, torch.device("cpu"))
+                if self.device.type == "cuda":
+                    torch.cuda.empty_cache()
         if inference_type == "full":
             pose_output, batch_lhand, batch_rhand, _, _ = outputs
         else:

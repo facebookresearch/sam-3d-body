@@ -4,20 +4,37 @@ import torch
 
 
 class FOVEstimator:
-    def __init__(self, name="moge2", device="cuda", **kwargs):
-        self.device = device
+    def __init__(self, name="moge2", device="cuda", offload_mode="none", **kwargs):
+        self.device = torch.device(device)
+        self.offload_mode = offload_mode
 
         if name == "moge2":
-            print("########### Using fov estimator: MoGe2...")
-            self.fov_estimator = load_moge(device, **kwargs)
+            print(f"########### Using fov estimator: MoGe2... (offload_mode={offload_mode!r})")
+            # Always load to CPU first regardless of offload_mode
+            self.fov_estimator = load_moge("cpu", **kwargs)
             self.fov_estimator_func = run_moge
-
             self.fov_estimator.eval()
+
+            if offload_mode == "none":
+                # Original behaviour: move to target device now
+                self.fov_estimator = self.fov_estimator.to(self.device)
+            # offload_mode="cpu": stays in RAM, moved per-call in get_cam_intrinsics
         else:
             raise NotImplementedError
 
     def get_cam_intrinsics(self, img, **kwargs):
-        return self.fov_estimator_func(self.fov_estimator, img, self.device, **kwargs)
+        if self.offload_mode == "cpu" and self.device.type != "cpu":
+            self.fov_estimator.to(self.device)
+            try:
+                result = self.fov_estimator_func(self.fov_estimator, img, self.device, **kwargs)
+            finally:
+                self.fov_estimator.cpu()
+                if self.device.type == "cuda":
+                    torch.cuda.empty_cache()
+            return result
+        else:
+            _device = next(self.fov_estimator.parameters()).device
+            return self.fov_estimator_func(self.fov_estimator, img, _device, **kwargs)
 
 
 def load_moge(device, path=""):
@@ -25,6 +42,7 @@ def load_moge(device, path=""):
 
     if path == "":
         path = "Ruicheng/moge-2-vitl-normal"
+    # Always load to CPU first; caller decides final device placement
     moge_model = MoGeModel.from_pretrained(path).to(device)
     return moge_model
 
@@ -32,8 +50,10 @@ def load_moge(device, path=""):
 def run_moge(model, input_image, device):
     # We expect the image to be RGB already
     H, W, _ = input_image.shape
+    # Derive device from model parameters so this works with CPU offloading
+    _device = next(model.parameters()).device
     input_image = torch.tensor(
-        input_image / 255, dtype=torch.float32, device=device
+        input_image / 255, dtype=torch.float32, device=_device
     ).permute(2, 0, 1)
 
     # Infer w/ MoGe2

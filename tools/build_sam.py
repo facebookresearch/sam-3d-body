@@ -6,22 +6,37 @@ from PIL import Image
 
 
 class HumanSegmentor:
-    def __init__(self, name="sam2", device="cuda", **kwargs):
-        self.device = device
+    def __init__(self, name="sam2", device="cuda", offload_mode="none", **kwargs):
+        self.device = torch.device(device)
+        self.offload_mode = offload_mode
 
         if name == "sam2":
-            print("########### Using human segmentor: SAM2...")
-            self.sam = load_sam2(device, **kwargs)
+            print(f"########### Using human segmentor: SAM2... (offload_mode={offload_mode!r})")
+            if offload_mode == "cpu":
+                # Load to CPU; move to device only during run_sam
+                self.sam = load_sam2("cpu", **kwargs)
+            else:
+                self.sam = load_sam2(device, **kwargs)
             self.sam_func = run_sam2
         elif name == "sam3":
-            print("########### Using human segmentor: SAM3...")
+            print(f"########### Using human segmentor: SAM3... (offload_mode={offload_mode!r})")
             self.sam = load_sam3(device, **kwargs)
             self.sam_func = run_sam3
         else:
             raise NotImplementedError
-    
+
     def run_sam(self, img, boxes, **kwargs):
-        return self.sam_func(self.sam, img, boxes)
+        if self.offload_mode == "cpu" and self.device.type != "cpu":
+            self.sam.model.to(self.device)
+            try:
+                result = self.sam_func(self.sam, img, boxes)
+            finally:
+                self.sam.model.cpu()
+                if self.device.type == "cuda":
+                    torch.cuda.empty_cache()
+            return result
+        else:
+            return self.sam_func(self.sam, img, boxes)
         
 
 def load_sam2(device, path):
@@ -42,14 +57,16 @@ def load_sam2(device, path):
 def load_sam3(device, path):
     from sam3.model_builder import build_sam3_image_model
     from sam3.model.sam3_image_processor import Sam3Processor
-    
-    model = build_sam3_image_model()
+
+    model = build_sam3_image_model(device=device)
     predictor = Sam3Processor(model)
     return predictor
 
 
 def run_sam2(sam_predictor, img, boxes):
-    with torch.autocast("cuda", dtype=torch.bfloat16):
+    _device = next(sam_predictor.model.parameters()).device
+    _dtype = torch.bfloat16 if _device.type == "cuda" else torch.float32
+    with torch.autocast(_device.type, dtype=_dtype):
         sam_predictor.set_image(img)
         all_masks, all_scores = [], []
         for i in range(boxes.shape[0]):
