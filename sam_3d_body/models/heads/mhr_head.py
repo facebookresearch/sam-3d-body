@@ -226,14 +226,20 @@ class MHRHead(nn.Module):
             # Zero out non-hand parameters
             model_params[:, self.nonhand_param_idxs] = 0
 
-        # MHR TorchScript uses float64 internally which MPS doesn't support.
-        # Move inputs to CPU for MHR forward, then move results back.
+        # MHR TorchScript uses float64 internally, which the MPS backend can't
+        # run. On MPS only, shuttle the forward pass through CPU and move the
+        # results back; CUDA/CPU run on-device with no per-frame host copy.
         orig_device = shape_params.device
-        curr_skinned_verts, curr_skel_state = self.mhr(
-            shape_params.cpu(), model_params.cpu(), expr_params.cpu()
-        )
-        curr_skinned_verts = curr_skinned_verts.to(orig_device)
-        curr_skel_state = curr_skel_state.to(orig_device)
+        if orig_device.type == "mps":
+            curr_skinned_verts, curr_skel_state = self.mhr(
+                shape_params.cpu(), model_params.cpu(), expr_params.cpu()
+            )
+            curr_skinned_verts = curr_skinned_verts.to(orig_device)
+            curr_skel_state = curr_skel_state.to(orig_device)
+        else:
+            curr_skinned_verts, curr_skel_state = self.mhr(
+                shape_params, model_params, expr_params
+            )
         curr_joint_coords, curr_joint_quats, _ = torch.split(
             curr_skel_state, [3, 4, 1], dim=2
         )
